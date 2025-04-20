@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.services.chat_service import chat_service
 from app.services.knowledge_service import knowledge_service
-from app.models.schemas import ChatRequest
+from app.models.schemas import ChatRequest, IntentType
 from config.settings import KNOWLEDGE_BASE_PATH
 
 # 配置日志
@@ -21,9 +21,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("test_order")
 
-# 项目基础路径
-BASE_DIR = Path(__file__).resolve().parent
-KNOWLEDGE_BASE_PATH = os.path.join(BASE_DIR, "data", "knowledge_base")
+# 不重新定义KNOWLEDGE_BASE_PATH，而是使用从config.settings导入的路径
 
 async def test_order_query():
     """测试订单查询功能"""
@@ -67,6 +65,37 @@ async def test_order_query():
         else:
             logger.error(f"未找到订单ID: {order_id}")
             
+        # 4. 测试通过ChatService进行订单查询
+        logger.info("\n\n开始测试ChatService订单查询...")
+        # 创建聊天请求
+        chat_request = ChatRequest(
+            query=f"我想查询一下我的订单 {order_id} 的状态",
+            session_id="test_session"
+        )
+        
+        # 处理聊天请求
+        chat_response = await chat_service.process_chat(chat_request)
+        
+        # 输出结果
+        logger.info("ChatService订单查询结果:")
+        logger.info(f"回复: {chat_response.response}")
+        logger.info(f"识别意图: {chat_response.intent}")
+        logger.info(f"参考源: {chat_response.sources}")
+        
+        # 5. 测试更自然语言的询问
+        logger.info("\n\n开始测试自然语言订单查询...")
+        natural_request = ChatRequest(
+            query=f"你好，我上个月买的东西，订单号是{order_id}，请问什么时候能到？",
+            session_id="test_session"
+        )
+        
+        natural_response = await chat_service.process_chat(natural_request)
+        
+        logger.info("自然语言订单查询结果:")
+        logger.info(f"回复: {natural_response.response}")
+        logger.info(f"识别意图: {natural_response.intent}")
+        logger.info(f"参考源: {natural_response.sources}")
+            
     except Exception as e:
         logger.error(f"订单查询出错: {str(e)}")
         import traceback
@@ -77,6 +106,15 @@ def generate_order_response(order_info):
     order_id = order_info.get("order_id", "未知")
     status = order_info.get("status", "未知").lower()
     
+    # 状态中文映射
+    status_cn = {
+        "shipped": "已发货",
+        "delivered": "已送达",
+        "processing": "处理中",
+        "cancelled": "已取消",
+        "pending": "待确认"
+    }.get(status, status)
+    
     # 根据不同状态生成不同回复
     status_messages = {
         "shipped": f"您的订单 {order_id} 已发货，正在配送中。",
@@ -86,7 +124,7 @@ def generate_order_response(order_info):
         "pending": f"您的订单 {order_id} 正在等待确认。"
     }
     
-    response = status_messages.get(status, f"您的订单 {order_id} 状态为: {status}")
+    response = status_messages.get(status, f"您的订单 {order_id} 状态为: \"{status_cn}\"")
     
     # 添加预计送达时间
     if "estimated_delivery" in order_info:

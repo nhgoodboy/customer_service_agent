@@ -184,4 +184,19 @@ async def health_check():
     Returns:
         服务状态
     """
-    return {"status": "ok"} 
+    return {"status": "ok"}
+
+
+@router.get("/session/{session_id}/context", response_model=Dict[str, Any])
+async def get_session_context(session_id: str):
+    """
+    获取会话上下文信息
+    
+    Args:
+        session_id: 会话ID
+        
+    Returns:
+        会话上下文信息
+    """
+    context = session_manager.get_session_context(session_id)
+    return context 

@@ -11,12 +11,12 @@ logger = logging.getLogger(__name__)
 class SessionManager:
     """会话管理器，负责管理用户的对话会话"""
     
-    def __init__(self, session_ttl: int = 3600):
+    def __init__(self, session_ttl: int = 3600 * 24):
         """
         初始化会话管理器
         
         Args:
-            session_ttl: 会话过期时间（秒），默认1小时
+            session_ttl: 会话过期时间（秒），默认24小时
         """
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.session_ttl = session_ttl
@@ -140,7 +140,7 @@ class SessionManager:
     
     def get_session_context(self, session_id: str) -> Dict[str, Any]:
         """
-        获取会话上下文信息
+        获取会话上下文数据
         
         Args:
             session_id: 会话ID
@@ -148,18 +148,32 @@ class SessionManager:
         Returns:
             会话上下文信息
         """
-        session = self.get_session(session_id)
-        
-        # 提取基本会话信息
-        context = {
-            "session_id": session_id,
-            "created_at": session.get("created_at", 0),
-            "last_active": session.get("last_active", 0),
-            "message_count": len(session["history"].messages),
-            "metadata": session.get("metadata", {})
-        }
-        
-        return context
+        try:
+            session = self.get_session(session_id)
+            if not session:
+                return {
+                    "exists": False,
+                    "message": "会话不存在"
+                }
+            
+            # 计算消息数量
+            message_count = len(session.get("messages", []))
+            
+            # 返回会话上下文信息
+            return {
+                "exists": True,
+                "session_id": session_id,
+                "created_at": session.get("created_at"),
+                "last_active": session.get("last_active"),
+                "message_count": message_count,
+                "expires_at": session.get("last_active", 0) + self.session_ttl
+            }
+        except Exception as e:
+            logging.error(f"获取会话上下文失败: {str(e)}")
+            return {
+                "exists": False,
+                "message": f"获取会话上下文失败: {str(e)}"
+            }
     
     def _cleanup_expired_sessions(self) -> None:
         """清理过期会话"""

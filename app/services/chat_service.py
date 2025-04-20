@@ -12,6 +12,7 @@ from app.models.schemas import IntentType, ChatRequest, ChatResponse
 from app.core.intent_classifier import intent_classifier
 from app.core.rag_retriever import rag_retriever
 from app.core.llm_manager import llm_manager
+from app.core.session_manager import session_manager  # 导入会话管理器
 from app.utils.helpers import performance_monitor
 from config.settings import KNOWLEDGE_BASE_PATH
 from app.services.knowledge_service import knowledge_service
@@ -24,35 +25,29 @@ class ChatService:
     
     def __init__(self):
         """初始化聊天服务"""
-        self.sessions = {}
+        # 不再使用自己的sessions字典，而是使用session_manager
         logger.info("聊天服务初始化完成")
     
     def create_session(self) -> Dict[str, Any]:
         """创建新的聊天会话"""
-        session_id = str(uuid.uuid4())
-        self.sessions[session_id] = {
-            "id": session_id,
-            "created_at": datetime.now().isoformat(),
-            "history": []
-        }
+        session_id = session_manager.create_session()
         logger.info(f"创建新会话: {session_id}")
         return {"id": session_id}
     
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """获取指定会话"""
-        session = self.sessions.get(session_id)
-        if not session:
-            logger.warning(f"会话未找到: {session_id}")
-        return session
+        try:
+            # 使用session_manager获取会话
+            session = session_manager.get_session(session_id)
+            return session
+        except Exception as e:
+            logger.warning(f"获取会话时出错: {str(e)}")
+            return None
     
     def delete_session(self, session_id: str) -> bool:
         """删除指定会话"""
-        if session_id in self.sessions:
-            del self.sessions[session_id]
-            logger.info(f"会话已删除: {session_id}")
-            return True
-        logger.warning(f"尝试删除不存在的会话: {session_id}")
-        return False
+        # 使用session_manager删除会话
+        return session_manager.delete_session(session_id)
     
     @performance_monitor
     async def process_chat(self, request: ChatRequest) -> ChatResponse:
@@ -60,21 +55,19 @@ class ChatService:
         try:
             # 获取或创建会话
             session_id = request.session_id
-            session = self.get_session(session_id)
-            if not session:
-                session_info = self.create_session()
-                session_id = session_info["id"]
-                session = self.get_session(session_id)
+            if not session_id or session_id == "undefined":
+                # 如果未提供有效会话ID，创建新会话
+                session_id = session_manager.create_session()
+                logger.info(f"为请求创建新会话ID: {session_id}")
+            
+            # 获取会话数据
+            session = session_manager.get_session(session_id)
             
             query = request.query
             logger.info(f"处理聊天请求: 会话={session_id}, 查询='{query}'")
             
             # 将用户消息添加到历史记录
-            session["history"].append({
-                "role": "user",
-                "content": query,
-                "timestamp": datetime.now().isoformat()
-            })
+            session_manager.add_message(session_id, "user", query)
             
             # 提取订单ID
             order_id = self._extract_order_id(query)
@@ -96,11 +89,7 @@ class ChatService:
                     response_text = self._generate_order_response(order_info)
                     
                     # 添加响应到历史记录
-                    session["history"].append({
-                        "role": "assistant",
-                        "content": response_text,
-                        "timestamp": datetime.now().isoformat()
-                    })
+                    session_manager.add_message(session_id, "assistant", response_text)
                     
                     # 返回响应
                     return ChatResponse(
@@ -112,21 +101,20 @@ class ChatService:
             # 使用RAG检索相关文档
             rag_result = await rag_retriever.retrieve(query, intent)
             
+            # 获取会话历史记录用于上下文
+            history = session_manager.get_chat_history(session_id)
+            
             # 生成响应
             response_text = await self._generate_response(
                 query=query,
                 intent=intent,
                 docs=rag_result.documents,
-                history=session["history"],
+                history=history,
                 system_prompt=request.system_prompt
             )
             
             # 添加响应到历史记录
-            session["history"].append({
-                "role": "assistant",
-                "content": response_text,
-                "timestamp": datetime.now().isoformat()
-            })
+            session_manager.add_message(session_id, "assistant", response_text)
             
             # 创建响应对象
             response = ChatResponse(

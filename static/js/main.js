@@ -1,56 +1,26 @@
+// 在文件开头添加调试模式开关
+const DEBUG_MODE = false; // 设置为true以显示会话调试信息
+
 document.addEventListener('DOMContentLoaded', function() {
     // DOM元素
     const chatMessages = document.querySelector('.chat-messages');
     const chatInput = document.getElementById('chat-input');
     const sendButton = document.querySelector('.send-btn');
+    const chatList = document.querySelector('.chat-list');
     const newChatButton = document.getElementById('new-chat-btn');
     const clearHistoryButton = document.getElementById('clear-history-btn');
-    const chatList = document.querySelector('.chat-list');
-    const sidebar = document.querySelector('.sidebar');
-    const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+    const mobileMenuButton = document.getElementById('mobile-menu-btn');
     
-    // 移动设备菜单按钮
-    if (mobileMenuBtn) {
-        mobileMenuBtn.addEventListener('click', function() {
-            sidebar.classList.toggle('active');
-        });
-        
-        // 点击聊天区域时关闭菜单
-        document.querySelector('.chat-container').addEventListener('click', function(e) {
-            if (sidebar.classList.contains('active') && !e.target.closest('#mobile-menu-btn')) {
-                sidebar.classList.remove('active');
-            }
-        });
-    }
-    
-    // 移除欢迎消息
-    const welcomeMessage = document.querySelector('.welcome-message');
-    if (welcomeMessage) {
-        chatMessages.removeChild(welcomeMessage);
-    }
-    
-    // 状态变量
-    let currentChatId = null;
+    // 用户聊天记录
     let chatHistory = [];
-    
-    // 初始化
-    initApp();
-    
-    // 事件监听器
-    sendButton.addEventListener('click', sendMessage);
-    chatInput.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    });
-    
-    newChatButton.addEventListener('click', createNewChat);
-    clearHistoryButton.addEventListener('click', clearHistory);
+    let currentChatId = null;
     
     // 初始化应用
+    initApp();
+    
+    // 初始化应用程序
     function initApp() {
-        // 从本地存储加载聊天历史
+        // 加载聊天历史
         loadChatHistory();
         
         // 如果没有聊天记录，创建一个新的
@@ -61,8 +31,37 @@ document.addEventListener('DOMContentLoaded', function() {
             loadChat(chatHistory[0].id);
         }
         
-        // 更新聊天列表UI
+        // 更新聊天列表
         updateChatList();
+        
+        // 事件监听器
+        sendButton.addEventListener('click', sendMessage);
+        chatInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        newChatButton.addEventListener('click', createNewChat);
+        clearHistoryButton.addEventListener('click', clearHistory);
+        
+        // 移动设备菜单
+        mobileMenuButton.addEventListener('click', function() {
+            document.querySelector('.sidebar').classList.toggle('active');
+        });
+        
+        // 处理会话调试模式
+        if (DEBUG_MODE) {
+            const sessionInfo = document.querySelector('.session-info');
+            sessionInfo.style.display = 'block';
+            
+            // 添加会话刷新按钮处理程序
+            document.getElementById('refresh-session-btn').addEventListener('click', refreshSessionInfo);
+            
+            // 初始化显示会话信息
+            refreshSessionInfo();
+        }
     }
     
     // 创建新聊天
@@ -162,6 +161,18 @@ document.addEventListener('DOMContentLoaded', function() {
             sessionId = null;
         }
         
+        // 获取会话创建时间，检查是否过期
+        const sessionCreatedAt = localStorage.getItem('session_created_at');
+        const now = Date.now();
+        // 如果会话创建时间超过60分钟，视为过期
+        const SESSION_TIMEOUT = 60 * 60 * 1000; // 60分钟，单位毫秒
+        if (sessionCreatedAt && (now - parseInt(sessionCreatedAt)) > SESSION_TIMEOUT) {
+            console.log('会话已过期，创建新会话');
+            sessionId = null;
+            localStorage.removeItem('session_id');
+            localStorage.removeItem('session_created_at');
+        }
+        
         // 如果没有session_id，先创建一个
         const createSessionIfNeeded = !sessionId 
             ? fetch('/api/session/create', {
@@ -173,6 +184,7 @@ document.addEventListener('DOMContentLoaded', function() {
               }).then(res => res.json()).then(data => {
                 sessionId = data.session_id;
                 localStorage.setItem('session_id', sessionId);
+                localStorage.setItem('session_created_at', Date.now().toString());
                 console.log('创建新会话ID:', sessionId);
                 return sessionId;
               })
@@ -214,6 +226,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (loadingElement.parentNode) {
                     chatMessages.removeChild(loadingElement);
                 }
+                
+                // 更新会话活跃时间
+                localStorage.setItem('session_created_at', Date.now().toString());
                 
                 // 添加机器人回复
                 const timestamp = new Date().toISOString();
@@ -346,7 +361,24 @@ document.addEventListener('DOMContentLoaded', function() {
         if (confirm('确定要清除所有聊天记录吗？此操作不可撤销。')) {
             chatHistory = [];
             localStorage.removeItem('chatHistory');
+            // 清除会话ID和相关数据
+            localStorage.removeItem('session_id');
+            localStorage.removeItem('session_created_at');
+            console.log('已清除所有聊天记录和会话数据');
             createNewChat();
+            updateChatList();
+            
+            // 调用API清除服务端会话
+            const oldSessionId = localStorage.getItem('session_id');
+            if (oldSessionId) {
+                fetch(`/api/session/${oldSessionId}`, {
+                    method: 'DELETE'
+                }).then(response => {
+                    console.log('服务端会话已清除');
+                }).catch(error => {
+                    console.error('清除服务端会话失败:', error);
+                });
+            }
         }
     }
     
@@ -398,5 +430,29 @@ document.addEventListener('DOMContentLoaded', function() {
     // 滚动到底部
     function scrollToBottom() {
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    // 刷新会话信息（仅在调试模式下使用）
+    function refreshSessionInfo() {
+        const sessionId = localStorage.getItem('session_id');
+        const sessionCreatedAt = localStorage.getItem('session_created_at');
+        const sessionStatusEl = document.getElementById('session-status');
+        
+        if (sessionId) {
+            const createdDate = sessionCreatedAt ? new Date(parseInt(sessionCreatedAt)) : 'unknown';
+            sessionStatusEl.innerHTML = `会话ID: ${sessionId}<br>创建时间: ${createdDate}<br>`;
+            
+            // 从服务器获取会话上下文信息
+            fetch(`/api/session/${sessionId}/context`)
+                .then(res => res.json())
+                .then(data => {
+                    sessionStatusEl.innerHTML += `消息数: ${data.message_count}<br>最后活跃: ${new Date(data.last_active * 1000).toLocaleString()}`;
+                })
+                .catch(err => {
+                    sessionStatusEl.innerHTML += `<span style="color:red">获取会话信息失败: ${err.message}</span>`;
+                });
+        } else {
+            sessionStatusEl.textContent = '无有效会话';
+        }
     }
 }); 
