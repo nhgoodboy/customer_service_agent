@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>电商智能客服</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- 添加网站图标 -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>">
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 -->
+        <div class="sidebar">
+            <div class="brand">
+                <h1>电商智能客服</h1>
+            </div>
+            
+            <div class="action-buttons">
+                <button id="new-chat-btn" class="sidebar-btn">
+                    <i class="fas fa-plus"></i> 新对话
+                </button>
+            </div>
+            
+            <div class="chat-history">
+                <h3>历史对话</h3>
+                <div class="chat-list">
+                    <!-- 聊天列表将通过JavaScript动态生成 -->
+                </div>
+            </div>
+            
+            <div class="action-buttons" style="margin-top: auto;">
+                <button id="clear-history-btn" class="sidebar-btn">
+                    <i class="fas fa-trash"></i> 清空历史
+                </button>
+            </div>
+        </div>
+        
+        <!-- 聊天主区域 -->
+        <div class="chat-container">
+            <div class="chat-header">
+                <h2>智能客服对话</h2>
+                <p>与AI客服助手进行对话，获取您需要的帮助</p>
+                <!-- 移动设备上显示的菜单按钮 -->
+                <button id="mobile-menu-btn" class="mobile-menu-btn">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+            
+            <div class="chat-messages">
+                <!-- 消息将通过JavaScript动态生成 -->
+                <div class="welcome-message message bot-message">
+                    <h3>欢迎使用电商智能客服</h3>
+                    <p>您可以询问关于：</p>
+                    <ul>
+                        <li>商品信息和推荐</li>
+                        <li>订单状态查询</li>
+                        <li>退换货政策</li>
+                        <li>配送相关问题</li>
+                        <li>账户与支付</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <textarea id="chat-input" placeholder="请输入您的问题..."></textarea>
+                <button class="send-btn">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/js/main.js"></script>
+</body>
+</html> 

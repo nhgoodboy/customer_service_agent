@@ -1,0 +1,184 @@
+[
+  {
+    "order_id": "OD2023112786302",
+    "customer_id": "C10045678",
+    "order_date": "2023-11-27T14:30:25",
+    "status": "shipping",
+    "estimated_delivery": "2023-11-29T18:00:00",
+    "shipping_method": "次日达",
+    "tracking_number": "YT5647839024651",
+    "items": [
+      {
+        "product_id": "P001",
+        "name": "星云智能手机X1",
+        "quantity": 1,
+        "price": 3999,
+        "color": "星空黑"
+      },
+      {
+        "product_id": "P005",
+        "name": "星云手机保护壳",
+        "quantity": 1,
+        "price": 99,
+        "color": "透明"
+      }
+    ],
+    "payment": {
+      "method": "支付宝",
+      "amount": 4098,
+      "status": "已支付"
+    },
+    "shipping_address": {
+      "name": "张三",
+      "phone": "138****1234",
+      "province": "广东省",
+      "city": "深圳市",
+      "district": "南山区",
+      "detail": "科技园南区A栋5楼",
+      "postcode": "518000"
+    },
+    "logistics": [
+      {
+        "time": "2023-11-27T16:45:10",
+        "status": "订单已出库",
+        "description": "您的订单已从仓库发出"
+      },
+      {
+        "time": "2023-11-28T09:20:35",
+        "status": "运输中",
+        "description": "包裹已到达深圳转运中心"
+      },
+      {
+        "time": "2023-11-28T15:40:22",
+        "status": "配送中",
+        "description": "包裹已分配给快递员王师傅（电话：135****6789），正在派送"
+      }
+    ]
+  },
+  {
+    "order_id": "OD2023110512567",
+    "customer_id": "C10067890",
+    "order_date": "2023-11-05T20:15:43",
+    "status": "delivered",
+    "delivery_date": "2023-11-08T13:25:18",
+    "shipping_method": "标准配送",
+    "tracking_number": "SF1234567890123",
+    "items": [
+      {
+        "product_id": "P002",
+        "name": "轻风超薄笔记本Pro",
+        "quantity": 1,
+        "price": 5999,
+        "color": "银色"
+      }
+    ],
+    "payment": {
+      "method": "微信支付",
+      "amount": 5999,
+      "status": "已支付"
+    },
+    "shipping_address": {
+      "name": "李四",
+      "phone": "159****5678",
+      "province": "北京市",
+      "city": "北京市",
+      "district": "海淀区",
+      "detail": "中关村科技园B区3号楼2单元501",
+      "postcode": "100080"
+    },
+    "logistics": [
+      {
+        "time": "2023-11-06T10:30:15",
+        "status": "订单已出库",
+        "description": "您的订单已从仓库发出"
+      },
+      {
+        "time": "2023-11-07T08:45:22",
+        "status": "运输中",
+        "description": "包裹已到达北京转运中心"
+      },
+      {
+        "time": "2023-11-08T09:20:37",
+        "status": "配送中",
+        "description": "包裹已分配给快递员李师傅（电话：137****4321），正在派送"
+      },
+      {
+        "time": "2023-11-08T13:25:18",
+        "status": "已送达",
+        "description": "包裹已由门卫代签收，如有问题请联系快递员"
+      }
+    ]
+  },
+  {
+    "order_id": "OD2023102398765",
+    "customer_id": "C10078901",
+    "order_date": "2023-10-23T13:05:37",
+    "status": "refunded",
+    "shipping_method": "标准配送",
+    "tracking_number": "ZT9876543210987",
+    "refund_info": {
+      "refund_id": "RF202310260001",
+      "request_date": "2023-10-26T09:45:20",
+      "reason": "商品质量问题",
+      "description": "收到的耳机右侧无声音",
+      "refund_date": "2023-10-30T14:20:15",
+      "refund_amount": 1299,
+      "refund_method": "原路退回"
+    },
+    "items": [
+      {
+        "product_id": "P003",
+        "name": "静听无线降噪耳机",
+        "quantity": 1,
+        "price": 1299,
+        "color": "象牙白"
+      }
+    ],
+    "payment": {
+      "method": "银联卡",
+      "amount": 1299,
+      "status": "已退款"
+    },
+    "shipping_address": {
+      "name": "王五",
+      "phone": "186****3456",
+      "province": "上海市",
+      "city": "上海市",
+      "district": "浦东新区",
+      "detail": "陆家嘴金融中心C座2505",
+      "postcode": "200120"
+    },
+    "logistics": [
+      {
+        "time": "2023-10-24T09:10:45",
+        "status": "订单已出库",
+        "description": "您的订单已从仓库发出"
+      },
+      {
+        "time": "2023-10-25T14:30:18",
+        "status": "已送达",
+        "description": "包裹已由本人签收"
+      },
+      {
+        "time": "2023-10-26T09:45:20",
+        "status": "申请退款",
+        "description": "您已申请退款，原因：商品质量问题"
+      },
+      {
+        "time": "2023-10-26T16:20:33",
+        "status": "退款审核通过",
+        "description": "您的退款申请已审核通过，请按照指引寄回商品"
+      },
+      {
+        "time": "2023-10-28T11:40:25",
+        "status": "商品已退回",
+        "description": "您退回的商品已收到，正在验收"
+      },
+      {
+        "time": "2023-10-30T14:20:15",
+        "status": "退款完成",
+        "description": "退款已原路返回您的支付账户，请注意查收"
+      }
+    ]
+  }
+] 

@@ -1,0 +1,15 @@
+langchain
+langchain-community
+langchain-core
+langchain-deepseek
+langchain-chroma
+llama-index
+chromadb
+python-dotenv
+pydantic
+fastapi
+uvicorn
+sentence-transformers
+numpy==1.26.4
+langchain-huggingface
+jinja2

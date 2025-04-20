@@ -1,0 +1,101 @@
+[
+  {
+    "product_id": "P001",
+    "name": "星云智能手机X1",
+    "category": "手机",
+    "price": 3999,
+    "description": "星云智能手机X1采用6.7英寸OLED全面屏，搭载第二代骁龙8处理器，12GB+256GB存储组合，5000mAh超大电池，支持67W快充，后置三摄系统，支持IP68防水防尘。",
+    "specs": {
+      "screen": "6.7英寸OLED全面屏，2400x1080分辨率",
+      "processor": "第二代骁龙8处理器",
+      "memory": "12GB RAM + 256GB ROM",
+      "battery": "5000mAh，支持67W快充",
+      "camera": "后置50MP主摄+13MP超广角+5MP微距，前置32MP自拍",
+      "os": "Android 14，星云OS 2.0",
+      "connectivity": "5G，WiFi 6，蓝牙5.3，NFC"
+    },
+    "stock_status": "有货",
+    "shipping": "下单后24小时内发货，支持次日达",
+    "warranty": "官方保修1年，15天无理由退换",
+    "faq": [
+      {
+        "question": "这款手机支持无线充电吗？",
+        "answer": "是的，星云智能手机X1支持15W无线充电。"
+      },
+      {
+        "question": "有哪些颜色可选？",
+        "answer": "目前有星空黑、极光蓝、晨曦金三种颜色可选。"
+      },
+      {
+        "question": "是否支持扩展存储？",
+        "answer": "不支持SD卡扩展，但256GB的存储空间足以满足日常使用需求。"
+      }
+    ]
+  },
+  {
+    "product_id": "P002",
+    "name": "轻风超薄笔记本Pro",
+    "category": "笔记本电脑",
+    "price": 5999,
+    "description": "轻风超薄笔记本Pro采用14英寸2.8K OLED屏幕，英特尔i7-12代处理器，16GB内存，512GB SSD，重量仅1.25kg，厚度14.9mm，续航时间长达15小时。",
+    "specs": {
+      "screen": "14英寸2.8K OLED屏幕，90Hz刷新率",
+      "processor": "英特尔i7-12代处理器",
+      "memory": "16GB LPDDR5 + 512GB SSD",
+      "graphics": "英特尔Iris Xe集成显卡",
+      "battery": "70Wh，支持65W PD快充，续航15小时",
+      "weight": "1.25kg",
+      "thickness": "14.9mm",
+      "os": "Windows 11 Home"
+    },
+    "stock_status": "有货",
+    "shipping": "下单后48小时内发货",
+    "warranty": "官方保修2年，硬盘免费升级服务",
+    "faq": [
+      {
+        "question": "这款笔记本适合图形设计工作吗？",
+        "answer": "轻风超薄笔记本Pro适合轻度图形设计工作，搭载英特尔Iris Xe集成显卡，可以流畅运行Photoshop等软件，但对于大型3D渲染任务可能力有不逮。"
+      },
+      {
+        "question": "散热性能如何？",
+        "answer": "采用双风扇双热管散热系统，日常办公和轻度设计工作不会有明显发热现象。"
+      },
+      {
+        "question": "接口有哪些？",
+        "answer": "配备2个Thunderbolt 4接口，1个USB-A 3.2接口，1个HDMI 2.0接口和3.5mm耳机麦克风二合一接口。"
+      }
+    ]
+  },
+  {
+    "product_id": "P003",
+    "name": "静听无线降噪耳机",
+    "category": "耳机",
+    "price": 1299,
+    "description": "静听无线降噪耳机采用40mm钛膜动圈单元，支持LDAC高清音质，主动降噪深度可达40dB，内置8麦克风阵列，支持环境音和通透模式，电池续航30小时。",
+    "specs": {
+      "driver": "40mm钛膜动圈单元",
+      "noise_cancellation": "自适应主动降噪，降噪深度40dB",
+      "battery": "单次充电可使用30小时，支持快充",
+      "connectivity": "蓝牙5.3，支持LDAC/AAC/SBC编码",
+      "weight": "255g",
+      "features": "环境音模式，通透模式，触控操作，多点连接"
+    },
+    "stock_status": "热销补货中",
+    "shipping": "预计5天内发货",
+    "warranty": "官方保修1年，7天无理由退换",
+    "faq": [
+      {
+        "question": "降噪效果如何？",
+        "answer": "静听无线降噪耳机采用行业领先的主动降噪技术，降噪深度可达40dB，能有效过滤飞机、地铁等环境噪音，为您提供沉浸式的聆听体验。"
+      },
+      {
+        "question": "支持有线连接吗？",
+        "answer": "是的，随机附赠3.5mm音频线，电池没电时也可以使用有线模式。"
+      },
+      {
+        "question": "是否支持同时连接多个设备？",
+        "answer": "支持多点连接功能，可以同时连接两台设备，比如手机和电脑，灵活切换音频源。"
+      }
+    ]
+  }
+] 
