@@ -1,4 +1,5 @@
 import os
+import torch
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -25,6 +26,10 @@ VECTOR_STORE_PATH = os.path.join(BASE_DIR, "data", "vector_store")
 
 # 知识库配置
 KNOWLEDGE_BASE_PATH = os.path.join(BASE_DIR, "data", "knowledge_base")
+
+# 嵌入模型配置
+EMBEDDING_MODEL_NAME = "moka-ai/m3e-base"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # LangChain配置
 LANGCHAIN_VERBOSE = True

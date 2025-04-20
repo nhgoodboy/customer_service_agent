@@ -1,6 +1,8 @@
 import os
-from typing import List, Dict, Any, Optional, Union
 import logging
+from typing import List, Dict, Any, Optional, Union
+from dotenv import load_dotenv
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from langchain.prompts import PromptTemplate
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -13,41 +15,120 @@ from config.settings import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, TEMPERATURE, MAX_T
 
 logger = logging.getLogger(__name__)
 
+# 加载环境变量
+load_dotenv()
+
 
 class LLMManager:
     """LLM管理器，负责管理和调用DeepSeek LLM"""
     
     def __init__(self):
         """初始化LLM管理器"""
-        self._llm = None
         self._initialize_llm()
     
     def _initialize_llm(self):
         """初始化LLM"""
-        if not DEEPSEEK_API_KEY:
-            logger.error("未设置DeepSeek API密钥，请在.env文件中设置DEEPSEEK_API_KEY")
-            raise ValueError("未设置DeepSeek API密钥")
-        
         try:
-            # 根据DeepSeek API的最新规范，修改参数传递方式
-            os.environ["DEEPSEEK_API_KEY"] = DEEPSEEK_API_KEY
+            # 检查是否有API密钥
+            if not DEEPSEEK_API_KEY:
+                raise ValueError("未找到DeepSeek API密钥，请检查环境变量或配置文件")
             
+            # 初始化模型
             self._llm = ChatDeepSeek(
                 model=DEEPSEEK_MODEL,
                 temperature=TEMPERATURE,
-                max_tokens=MAX_TOKENS
+                max_tokens=MAX_TOKENS,
+                api_key=DEEPSEEK_API_KEY
             )
+            
             logger.info(f"成功初始化DeepSeek LLM: {DEEPSEEK_MODEL}")
         except Exception as e:
             logger.error(f"初始化DeepSeek LLM失败: {str(e)}")
-            raise
+            # 创建一个简单的备用模型，在实际调用时会返回错误信息
+            self._llm = None
     
     @property
     def llm(self) -> BaseChatModel:
         """获取LLM实例"""
-        if self._llm is None:
-            self._initialize_llm()
+        if not self._llm:
+            raise ValueError("LLM未正确初始化")
         return self._llm
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(Exception),
+    )
+    async def _retry_llm_call(self, messages: List[Dict[str, Any]]) -> Any:
+        """带有自动重试的LLM调用"""
+        try:
+            logger.debug(f"调用LLM，消息数量: {len(messages)}")
+            return await self.llm.ainvoke(messages)
+        except Exception as e:
+            logger.warning(f"LLM调用失败，尝试重试: {str(e)}")
+            raise  # 重新抛出异常，让重试装饰器捕获
+    
+    async def generate_response(self, messages: List[Dict[str, Any]]) -> str:
+        """
+        生成回复
+        
+        Args:
+            messages: 消息列表
+            
+        Returns:
+            生成的回复
+        """
+        if not self._llm:
+            logger.error("LLM未初始化，无法生成回复")
+            return "抱歉，AI服务暂时不可用，请稍后再试。"
+        
+        try:
+            # 转换消息格式
+            formatted_messages = self._format_messages(messages)
+            
+            # 调用LLM（带重试）
+            response = await self._retry_llm_call(formatted_messages)
+            
+            # 解析响应
+            if hasattr(response, 'content'):
+                return response.content
+            elif isinstance(response, str):
+                return response
+            else:
+                return str(response)
+                
+        except Exception as e:
+            logger.error(f"生成回复失败: {str(e)}")
+            return "抱歉，我在处理您的请求时遇到了问题，请稍后再试。"
+    
+    def _format_messages(self, messages: List[Dict[str, Any]]) -> List[Union[SystemMessage, HumanMessage, AIMessage]]:
+        """
+        将消息列表转换为LangChain消息格式
+        
+        Args:
+            messages: 原始消息列表
+            
+        Returns:
+            LangChain格式的消息列表
+        """
+        formatted_messages = []
+        
+        for message in messages:
+            role = message.get("role", "").lower()
+            content = message.get("content", "")
+            
+            if role == "system":
+                formatted_messages.append(SystemMessage(content=content))
+            elif role == "user":
+                formatted_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                formatted_messages.append(AIMessage(content=content))
+            else:
+                # 未知角色，默认当作用户消息
+                logger.warning(f"未知消息角色: {role}，将作为用户消息处理")
+                formatted_messages.append(HumanMessage(content=content))
+        
+        return formatted_messages
     
     def get_chat_chain(self, system_prompt: str = None):
         """
@@ -145,37 +226,45 @@ class LLMManager:
         
         return rag_chain
     
-    def direct_query(self, query: str, system_prompt: str = None) -> str:
+    def direct_query(self, query: str, system_prompt: Optional[str] = None) -> str:
         """
-        直接查询LLM
+        直接查询LLM（同步方法，用于备用）
         
         Args:
             query: 查询文本
-            system_prompt: 系统提示
+            system_prompt: 系统提示（可选）
             
         Returns:
-            LLM响应
+            生成的回复
         """
-        if system_prompt is None:
-            system_prompt = "你是一个专业的电商客服助手，负责回答用户关于商品、订单、退款等问题。请提供准确、有用的信息，并保持友好的态度。"
-        
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=query)
-        ]
+        if not self._llm:
+            logger.error("LLM未初始化，无法处理查询")
+            return "抱歉，AI服务暂时不可用，请稍后再试。"
         
         try:
-            response = self.llm.invoke(messages)
-            # 处理不同类型的响应格式
+            messages = []
+            
+            # 添加系统提示（如果有）
+            if system_prompt:
+                messages.append(SystemMessage(content=system_prompt))
+            
+            # 添加用户查询
+            messages.append(HumanMessage(content=query))
+            
+            # 调用LLM
+            response = self._llm.invoke(messages)
+            
+            # 解析响应
             if hasattr(response, 'content'):
                 return response.content
             elif isinstance(response, str):
                 return response
             else:
                 return str(response)
+                
         except Exception as e:
-            logger.error(f"直接查询LLM失败: {str(e)}")
-            return "抱歉，我暂时无法回答您的问题，请稍后再试。"
+            logger.error(f"直接查询失败: {str(e)}")
+            return "抱歉，我无法处理您的请求，请稍后再试。"
     
     def format_chat_history(self, history: List[Dict[str, str]]) -> List[Union[HumanMessage, AIMessage]]:
         """

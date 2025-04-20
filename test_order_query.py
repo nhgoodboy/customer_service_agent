@@ -1,10 +1,16 @@
-import asyncio
-import logging
-import json
-import os
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-from app.services.knowledge_service import knowledge_service
+import asyncio
+import json
+import logging
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
 from app.services.chat_service import chat_service
+from app.services.knowledge_service import knowledge_service
 from app.models.schemas import ChatRequest
 from config.settings import KNOWLEDGE_BASE_PATH
 
@@ -13,76 +19,102 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("test_order")
+
+# 项目基础路径
+BASE_DIR = Path(__file__).resolve().parent
+KNOWLEDGE_BASE_PATH = os.path.join(BASE_DIR, "data", "knowledge_base")
 
 async def test_order_query():
     """测试订单查询功能"""
+    logger.info("开始测试订单查询...")
     
-    # 1. 初始化知识库
-    logger.info("正在初始化知识库...")
-    results = knowledge_service.init_knowledge_base()
-    logger.info(f"知识库初始化结果: {results}")
-    
-    # 2. 直接测试订单查询功能
+    # 直接读取订单信息
     order_id = "OD2023110512567"
-    logger.info(f"直接测试查询订单: {order_id}")
+    logger.info(f"查询订单ID: {order_id}")
     
-    # 2.1 使用知识服务查询
-    order_info = knowledge_service.find_order_by_id(order_id)
-    if order_info:
-        logger.info(f"知识服务找到订单: {order_id}")
-        logger.info(f"订单状态: {order_info.get('status')}")
-    else:
-        logger.error(f"知识服务未找到订单: {order_id}")
+    # 1. 读取订单文件
+    order_file = os.path.join(KNOWLEDGE_BASE_PATH, "order_samples.json")
+    if not os.path.exists(order_file):
+        logger.error(f"订单文件不存在: {order_file}")
+        return
+    
+    try:
+        with open(order_file, 'r', encoding='utf-8') as f:
+            orders = json.load(f)
         
-        # 2.2 直接读取文件测试
-        file_path = os.path.join(KNOWLEDGE_BASE_PATH, "order_samples.json")
-        logger.info(f"尝试直接读取文件: {file_path}")
+        logger.info(f"成功读取订单文件，包含 {len(orders)} 条订单记录")
         
-        if os.path.exists(file_path):
-            with open(file_path, 'r', encoding='utf-8') as f:
-                orders = json.load(f)
-                
-            logger.info(f"文件中包含 {len(orders)} 条订单记录")
+        # 2. 搜索特定订单ID
+        order = next((o for o in orders if o.get("order_id") == order_id), None)
+        
+        if order:
+            logger.info("订单查询成功!")
+            logger.info(f"订单ID: {order.get('order_id')}")
+            logger.info(f"订单状态: {order.get('status')}")
+            logger.info(f"创建时间: {order.get('order_date')}")
+            if 'estimated_delivery' in order:
+                logger.info(f"预计送达: {order.get('estimated_delivery')}")
+            if 'items' in order:
+                logger.info(f"订单商品: {len(order.get('items'))} 件")
+                for item in order.get('items'):
+                    logger.info(f"  - {item.get('name')} x {item.get('quantity')} (价格: {item.get('price')})")
             
-            # 搜索订单号
-            found = False
-            for order in orders:
-                if isinstance(order, dict) and order.get("order_id") == order_id:
-                    logger.info(f"在文件中找到订单 {order_id}")
-                    found = True
-                    break
-            
-            if not found:
-                logger.error(f"文件中未找到订单 {order_id}")
+            # 3. 生成订单查询回复
+            status = order.get('status', '未知').lower()
+            response = generate_order_response(order)
+            logger.info(f"\n订单查询回复:\n{response}")
         else:
-            logger.error(f"订单文件不存在: {file_path}")
+            logger.error(f"未找到订单ID: {order_id}")
+            
+    except Exception as e:
+        logger.error(f"订单查询出错: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+def generate_order_response(order_info):
+    """根据订单信息生成响应"""
+    order_id = order_info.get("order_id", "未知")
+    status = order_info.get("status", "未知").lower()
     
-    # 3. 测试聊天服务的订单查询功能
-    logger.info("测试聊天服务的订单查询功能")
+    # 根据不同状态生成不同回复
+    status_messages = {
+        "shipped": f"您的订单 {order_id} 已发货，正在配送中。",
+        "delivered": f"您的订单 {order_id} 已送达。",
+        "processing": f"您的订单 {order_id} 正在处理中，我们会尽快安排发货。",
+        "cancelled": f"您的订单 {order_id} 已取消。",
+        "pending": f"您的订单 {order_id} 正在等待确认。"
+    }
     
-    # 3.1 创建聊天请求
-    request = ChatRequest(
-        query=f"我想查询一下订单号为{order_id}的状态",
-        session_id="test_session"
-    )
+    response = status_messages.get(status, f"您的订单 {order_id} 状态为: {status}")
     
-    # 3.2 处理聊天请求
-    response = await chat_service.process_chat(request)
+    # 添加预计送达时间
+    if "estimated_delivery" in order_info:
+        response += f" 预计送达时间为 {order_info['estimated_delivery']}。"
     
-    # 3.3 输出结果
-    logger.info(f"聊天响应: {response.response}")
-    logger.info(f"意图识别: {response.intent}")
-    logger.info(f"参考源: {response.sources}")
+    # 添加物流信息
+    if "tracking_number" in order_info:
+        tracking = order_info["tracking_number"]
+        carrier = order_info.get("carrier", "物流公司")
+        response += f" 物流公司: {carrier}, 物流单号: {tracking}。"
     
-    # 3.4 再次测试，使用更自然的查询语句
-    request = ChatRequest(
-        query=f"你好，能帮我查一下订单OD2023110512567的物流信息吗？",
-        session_id="test_session"
-    )
+    # 添加订单商品信息
+    if "items" in order_info and order_info["items"]:
+        items = order_info["items"]
+        if len(items) == 1:
+            item = items[0]
+            response += f"\n\n您购买的商品是: {item.get('name')} x {item.get('quantity')}。"
+        else:
+            items_text = ", ".join([f"{item.get('name')} x {item.get('quantity')}" for item in items[:3]])
+            if len(items) > 3:
+                items_text += f" 等共 {len(items)} 件商品"
+            response += f"\n\n您购买的商品包括: {items_text}。"
     
-    response = await chat_service.process_chat(request)
-    logger.info(f"自然语言查询响应: {response.response}")
+    # 添加友好结尾
+    response += "\n\n如果您有其他问题，随时告诉我。"
+    
+    return response
 
 if __name__ == "__main__":
+    print(f"Python版本: {sys.version}")
     asyncio.run(test_order_query()) 

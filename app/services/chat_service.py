@@ -1,343 +1,297 @@
-import logging
-from typing import Dict, List, Any, Optional
 import json
-import re
+import logging
 import os
+import re
+import uuid
+from datetime import datetime
+import time
+import traceback
+from typing import Dict, List, Optional, Any, Tuple
 
 from app.models.schemas import IntentType, ChatRequest, ChatResponse
-from app.core.llm_manager import llm_manager
 from app.core.intent_classifier import intent_classifier
 from app.core.rag_retriever import rag_retriever
-from app.core.session_manager import session_manager
-from app.utils.helpers import extract_document_content, truncate_text, format_chat_history
+from app.core.llm_manager import llm_manager
+from app.utils.helpers import performance_monitor
 from config.settings import KNOWLEDGE_BASE_PATH
 from app.services.knowledge_service import knowledge_service
 
+# 配置日志
 logger = logging.getLogger(__name__)
 
-
 class ChatService:
-    """聊天服务，整合意图识别、RAG检索和会话管理"""
+    """聊天服务，处理聊天会话和消息"""
     
     def __init__(self):
         """初始化聊天服务"""
-        self.llm_manager = llm_manager
-        self.intent_classifier = intent_classifier
-        self.rag_retriever = rag_retriever
-        self.session_manager = session_manager
+        self.sessions = {}
+        logger.info("聊天服务初始化完成")
     
+    def create_session(self) -> Dict[str, Any]:
+        """创建新的聊天会话"""
+        session_id = str(uuid.uuid4())
+        self.sessions[session_id] = {
+            "id": session_id,
+            "created_at": datetime.now().isoformat(),
+            "history": []
+        }
+        logger.info(f"创建新会话: {session_id}")
+        return {"id": session_id}
+    
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """获取指定会话"""
+        session = self.sessions.get(session_id)
+        if not session:
+            logger.warning(f"会话未找到: {session_id}")
+        return session
+    
+    def delete_session(self, session_id: str) -> bool:
+        """删除指定会话"""
+        if session_id in self.sessions:
+            del self.sessions[session_id]
+            logger.info(f"会话已删除: {session_id}")
+            return True
+        logger.warning(f"尝试删除不存在的会话: {session_id}")
+        return False
+    
+    @performance_monitor
     async def process_chat(self, request: ChatRequest) -> ChatResponse:
-        """
-        处理聊天请求
-        
-        Args:
-            request: 聊天请求
-            
-        Returns:
-            聊天响应
-        """
-        query = request.query
-        session_id = request.session_id
-        
+        """处理聊天请求"""
         try:
-            # 保存用户消息到会话历史
-            self.session_manager.add_message(session_id, "user", query)
+            # 获取或创建会话
+            session_id = request.session_id
+            session = self.get_session(session_id)
+            if not session:
+                session_info = self.create_session()
+                session_id = session_info["id"]
+                session = self.get_session(session_id)
             
-            # 获取聊天历史
-            chat_history = self.session_manager.get_chat_history(session_id)
+            query = request.query
+            logger.info(f"处理聊天请求: 会话={session_id}, 查询='{query}'")
             
-            # 分类意图
-            intent_result = await self.intent_classifier.classify(query)
-            intent = intent_result.intent
+            # 将用户消息添加到历史记录
+            session["history"].append({
+                "role": "user",
+                "content": query,
+                "timestamp": datetime.now().isoformat()
+            })
             
-            # 记录意图到会话元数据
-            self.session_manager.set_session_metadata(session_id, "last_intent", intent.value)
-            
-            # 提取订单号
+            # 提取订单ID
             order_id = self._extract_order_id(query)
             
-            # 如果意图是订单查询且找到了订单号，优先使用直接订单查询
+            # 意图分类
+            intent_result = await intent_classifier.classify(query)
+            intent = intent_result.intent
+            confidence = intent_result.confidence
+            
+            logger.info(f"意图分类: {intent}, 置信度: {confidence}")
+            
+            # 如果是订单查询
             if intent == IntentType.ORDER_STATUS and order_id:
+                logger.info(f"检测到订单查询: {order_id}")
                 order_info = self._find_order_by_id(order_id)
+                
                 if order_info:
-                    # 如果找到了订单信息，直接生成回复
-                    response_text = await self._generate_order_response(order_id, order_info, query)
+                    # 生成订单响应
+                    response_text = self._generate_order_response(order_info)
                     
-                    # 保存助手回复到会话历史
-                    self.session_manager.add_message(session_id, "assistant", response_text)
+                    # 添加响应到历史记录
+                    session["history"].append({
+                        "role": "assistant",
+                        "content": response_text,
+                        "timestamp": datetime.now().isoformat()
+                    })
                     
-                    # 创建响应
-                    response = ChatResponse(
+                    # 返回响应
+                    return ChatResponse(
                         response=response_text,
                         intent=intent,
-                        sources=["order_samples.json"]
+                        sources=[]
                     )
-                    
-                    return response
             
-            # 对于特定关键词内容，使用多向量存储搜索以提高召回率
-            if any(keyword in query for keyword in ["积分", "points", "会员", "兑换"]):
-                logger.info(f"检测到积分相关查询，使用多向量存储搜索: {query}")
-                rag_result = await self.rag_retriever.multi_vector_store_search(query)
-            else:
-                # 使用增强型RAG检索功能
-                rag_result = await self.rag_retriever.retrieve(query, intent)
+            # 使用RAG检索相关文档
+            rag_result = await rag_retriever.retrieve(query, intent)
             
-            # 生成回复
-            response_text = await self._generate_response(query, intent, rag_result, chat_history)
+            # 生成响应
+            response_text = await self._generate_response(
+                query=query,
+                intent=intent,
+                docs=rag_result.documents,
+                history=session["history"],
+                system_prompt=request.system_prompt
+            )
             
-            # 保存助手回复到会话历史
-            self.session_manager.add_message(session_id, "assistant", response_text)
+            # 添加响应到历史记录
+            session["history"].append({
+                "role": "assistant",
+                "content": response_text,
+                "timestamp": datetime.now().isoformat()
+            })
             
-            # 创建响应
+            # 创建响应对象
             response = ChatResponse(
                 response=response_text,
                 intent=intent,
-                sources=rag_result.sources if rag_result.documents else None
+                sources=rag_result.sources if rag_result.sources else []
             )
             
             return response
             
         except Exception as e:
-            logger.error(f"处理聊天请求失败: {str(e)}")
+            logger.error(f"处理聊天请求时出错: {str(e)}")
+            traceback.print_exc()
             
-            # 保存错误响应到会话历史
-            error_message = "抱歉，我在处理您的请求时遇到了问题，请稍后再试。"
-            self.session_manager.add_message(session_id, "assistant", error_message)
-            
+            # 返回错误响应
             return ChatResponse(
-                response=error_message,
-                intent=IntentType.UNKNOWN
+                response="抱歉，处理您的请求时出现了问题。请稍后再试。",
+                intent=IntentType.UNKNOWN,
+                sources=[]
             )
     
     def _extract_order_id(self, query: str) -> Optional[str]:
-        """
-        从查询中提取订单号
-        
-        Args:
-            query: 用户查询
-            
-        Returns:
-            订单号或None
-        """
-        # 常见的订单号格式，例如OD+年月日+数字
-        pattern = r'OD\d{10,12}'
+        """从查询中提取订单ID"""
+        pattern = r'OD\d{10,13}'  # 允许更长的订单号
         match = re.search(pattern, query)
         if match:
-            return match.group(0)
+            order_id = match.group()
+            logger.info(f"从查询中提取到订单ID: {order_id}")
+            return order_id
         return None
     
     def _find_order_by_id(self, order_id: str) -> Optional[Dict[str, Any]]:
-        """
-        根据订单号查找订单信息
-        
-        Args:
-            order_id: 订单号
+        """根据订单ID查找订单信息"""
+        try:
+            # 使用知识服务查找订单
+            order = knowledge_service.find_order_by_id(order_id)
+            if order:
+                logger.info(f"通过知识服务找到订单: {order_id}")
+                return order
             
-        Returns:
-            订单信息或None
-        """
-        # 使用知识服务查找订单
-        order_info = knowledge_service.find_order_by_id(order_id)
-        if order_info:
-            return order_info
-            
-        # 如果知识服务未找到，尝试直接从文件查找
-        order_files = ["order_samples.json"]
-        for file_name in order_files:
-            file_path = os.path.join(KNOWLEDGE_BASE_PATH, file_name)
+            # 如果知识服务未找到，直接从文件读取
+            file_path = os.path.join(KNOWLEDGE_BASE_PATH, "order_samples.json")
             if os.path.exists(file_path):
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        orders = json.load(f)
-                        
-                    # 搜索订单号
-                    if isinstance(orders, list):
-                        for order in orders:
-                            if isinstance(order, dict) and order.get("order_id") == order_id:
-                                logger.info(f"在文件 {file_name} 中找到订单 {order_id}")
-                                return order
-                except Exception as e:
-                    logger.error(f"读取订单文件 {file_path} 失败: {str(e)}")
-        
-        logger.warning(f"未找到订单号 {order_id} 的信息")
-        return None
-    
-    async def _generate_order_response(self, order_id: str, order_info: Dict[str, Any], query: str) -> str:
-        """
-        生成订单查询回复
-        
-        Args:
-            order_id: 订单号
-            order_info: 订单信息
-            query: 用户查询
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    orders = json.load(f)
+                
+                # 搜索订单
+                for order in orders:
+                    if order.get("order_id") == order_id:
+                        logger.info(f"直接从文件找到订单: {order_id}")
+                        return order
             
-        Returns:
-            生成的回复
-        """
-        from langchain_core.messages import SystemMessage, HumanMessage
-        
-        # 将订单信息转换为格式化文本
-        order_text = json.dumps(order_info, ensure_ascii=False, indent=2)
-        
-        # 系统提示
-        system_prompt = """你是一个专业的电商客服助手，擅长处理订单状态查询。
-请根据提供的订单信息回答用户关于订单的问题。准确说明订单的状态、物流信息和预计送达时间。
-回答要基于提供的订单数据，语言要自然友好，不要直接返回JSON数据。
-回答时保持友好、专业的语气，确保回答简洁明了。"""
-        
-        # 用户提示
-        user_prompt = f"""订单信息:
-{order_text}
-
-用户问题:
-{query}
-
-请基于以上订单信息回答用户问题:"""
-        
-        # 调用LLM
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
-        ]
-        
-        try:
-            response = await self.llm_manager.llm.ainvoke(messages)
-            if hasattr(response, 'content'):
-                return response.content
-            elif isinstance(response, str):
-                return response
-            else:
-                return str(response)
+            logger.warning(f"未找到订单: {order_id}")
+            return None
         except Exception as e:
-            logger.error(f"生成订单回复失败: {str(e)}")
-            return f"根据订单号 {order_id} 查询到相关信息，但在处理过程中遇到问题。请稍后再试。"
+            logger.error(f"查找订单时出错: {str(e)}")
+            return None
     
-    async def _generate_response(
-        self, 
-        query: str, 
-        intent: IntentType, 
-        rag_result: Any, 
-        chat_history: List[Dict[str, str]]
-    ) -> str:
-        """
-        生成回复
-        
-        Args:
-            query: 用户查询
-            intent: 意图
-            rag_result: RAG检索结果
-            chat_history: 聊天历史
-            
-        Returns:
-            生成的回复
-        """
+    def _generate_order_response(self, order_info: Dict[str, Any]) -> str:
+        """根据订单信息生成响应"""
         try:
-            # 确定系统提示
-            system_prompt = self._get_system_prompt_by_intent(intent)
+            order_id = order_info.get("order_id", "未知")
+            status = order_info.get("status", "未知").lower()
             
-            # 提取检索文档内容
-            context = ""
-            if rag_result.documents:
-                # 格式化文档内容，考虑特殊类型
-                docs_text = []
-                for doc in rag_result.documents:
-                    if isinstance(doc, dict):
-                        # 检查是否是FAQ类型的文档
-                        if doc.get("type") == "faq":
-                            faq_text = f"问题: {doc.get('question', '')}\n回答: {doc.get('content', '')}"
-                            docs_text.append(faq_text)
-                        else:
-                            docs_text.append(json.dumps(doc, ensure_ascii=False))
-                    else:
-                        docs_text.append(str(doc))
-                
-                context = "\n\n".join(docs_text)
-                
-                # 截断文本以避免超过最大长度
-                context = truncate_text(context, max_length=3000)
+            # 根据不同的订单状态生成不同的响应
+            status_messages = {
+                "shipped": f"您的订单 {order_id} 已发货，正在配送中。",
+                "delivered": f"您的订单 {order_id} 已送达。",
+                "processing": f"您的订单 {order_id} 正在处理中，我们会尽快安排发货。",
+                "cancelled": f"您的订单 {order_id} 已取消。",
+                "pending": f"您的订单 {order_id} 正在等待确认。"
+            }
             
-            # 如果没有检索到文档，使用通用回复
-            if not context:
-                # 直接使用LLM回答，使用相同的消息格式
-                from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-                
-                # 创建系统消息和用户消息
-                messages = [
-                    SystemMessage(content=system_prompt)
-                ]
-                
-                # 添加历史消息（如果有的话）
-                for msg in chat_history[:-1]:  # 排除最后一条用户消息
-                    role = msg.get("role", "")
-                    content = msg.get("content", "")
-                    if role == "user":
-                        messages.append(HumanMessage(content=content))
-                    elif role == "assistant":
-                        messages.append(AIMessage(content=content))
-                
-                # 添加当前用户查询
-                messages.append(HumanMessage(content=query))
-                
-                try:
-                    # 调用LLM
-                    response = await self.llm_manager.llm.ainvoke(messages)
-                    if hasattr(response, 'content'):
-                        return response.content
-                    elif isinstance(response, str):
-                        return response
-                    else:
-                        # 处理其他可能的响应格式
-                        return str(response)
-                except Exception as e:
-                    logger.error(f"调用LLM失败: {str(e)}")
-                    # 使用直接查询作为备选方案
-                    return self.llm_manager.direct_query(query, system_prompt)
+            response = status_messages.get(status, f"您的订单 {order_id} 状态为: {status}")
             
-            # 使用RAG提示模板
-            rag_prompt = f"""
-{system_prompt}
-
-检索到的信息:
-{context}
-
-用户问题:
-{query}
-
-请基于检索到的信息回答用户问题:
-"""
+            # 添加预计送达时间
+            if "estimated_delivery" in order_info:
+                response += f" 预计送达时间为 {order_info['estimated_delivery']}。"
             
-            # 直接调用LLM
-            from langchain_core.messages import SystemMessage, HumanMessage
-            messages = [SystemMessage(content=rag_prompt)]
-            try:
-                response = await self.llm_manager.llm.ainvoke(messages)
-                if hasattr(response, 'content'):
-                    return response.content
-                elif isinstance(response, str):
-                    return response
+            # 添加物流信息
+            if "tracking_number" in order_info:
+                tracking = order_info["tracking_number"]
+                carrier = order_info.get("carrier", "物流公司")
+                response += f" 物流公司: {carrier}, 物流单号: {tracking}。"
+            
+            # 添加友好结尾
+            response += "如果您有其他问题，随时告诉我。"
+            
+            return response
+        except Exception as e:
+            logger.error(f"生成订单响应时出错: {str(e)}")
+            return f"抱歉，我在处理您关于订单 {order_info.get('order_id', '未知')} 的查询时遇到了问题。请稍后再试。"
+    
+    async def _generate_response(self, query: str, intent: IntentType, docs: List[Any], history: List[Dict[str, Any]], system_prompt: Optional[str] = None) -> str:
+        """生成聊天响应"""
+        try:
+            if not docs:
+                logger.info("未找到相关文档，使用通用回复模板")
+                
+                # 根据意图提供通用回复
+                if intent == IntentType.PRODUCT_INQUIRY:
+                    return "抱歉，我没有找到与您询问的产品相关的信息。请提供更多细节，例如产品名称或型号。"
+                elif intent == IntentType.ORDER_STATUS:
+                    return "抱歉，我无法找到您的订单信息。请确认您提供的订单号是否正确。"
+                elif intent == IntentType.RETURN_REFUND:
+                    return "关于退货和退款的问题，请提供您的订单号和想要退货的商品，以便我为您提供更准确的帮助。"
                 else:
-                    # 处理其他可能的响应格式
-                    return str(response)
-            except Exception as e:
-                logger.error(f"调用RAG LLM失败: {str(e)}")
-                # 使用直接查询作为备选方案
-                return self.llm_manager.direct_query(rag_prompt)
+                    return "抱歉，我无法理解您的问题。请尝试用不同的方式提问，或提供更多信息。"
+            
+            # 使用LLM生成响应
+            if not system_prompt:
+                system_prompt = self._get_system_prompt(intent)
+                
+            # 处理不同格式的文档内容
+            doc_contents = []
+            for doc in docs:
+                if isinstance(doc, dict):
+                    # 如果是字典，尝试提取内容
+                    if "content" in doc:
+                        doc_contents.append(str(doc["content"]))
+                    else:
+                        # 如果没有content字段，将整个字典转为字符串
+                        doc_contents.append(json.dumps(doc, ensure_ascii=False))
+                else:
+                    # 如果是Document对象
+                    if hasattr(doc, "page_content"):
+                        doc_contents.append(doc.page_content)
+                    else:
+                        # 其他情况，转为字符串
+                        doc_contents.append(str(doc))
+            
+            # 合并文档内容
+            context = "\n\n".join(doc_contents)
+            
+            # 构建消息列表
+            messages = []
+            
+            # 添加系统提示
+            messages.append({"role": "system", "content": system_prompt})
+                
+            # 添加上下文
+            if context:
+                messages.append({"role": "system", "content": f"参考信息:\n{context}"})
+                
+            # 添加聊天历史
+            for msg in history[-6:-1]:  # 仅使用最近5条消息（不包括当前查询）
+                messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
+            
+            # 添加当前查询
+            messages.append({"role": "user", "content": query})
+            
+            # 生成响应
+            response = await llm_manager.generate_response(messages)
+            
+            return response
             
         except Exception as e:
-            logger.error(f"生成回复失败: {str(e)}")
-            return "抱歉，我暂时无法回答您的问题，请稍后再试。"
+            logger.error(f"生成响应时出错: {str(e)}")
+            return "抱歉，我暂时无法回答您的问题。请稍后再试。"
     
-    def _get_system_prompt_by_intent(self, intent: IntentType) -> str:
-        """
-        根据意图获取系统提示
-        
-        Args:
-            intent: 用户意图
-            
-        Returns:
-            系统提示
-        """
+    def _get_system_prompt(self, intent: IntentType) -> str:
+        """根据意图获取系统提示词"""
         prompts = {
             IntentType.PRODUCT_INQUIRY: """你是一个专业的电商客服助手，擅长回答商品相关问题。
 请根据提供的信息回答用户的商品咨询。回答要详细、准确，突出商品的优势和特点。
@@ -359,16 +313,10 @@ class ChatService:
             IntentType.GENERAL_INQUIRY: """你是一个专业的电商客服助手，擅长回答各类一般性问题。
 请根据提供的信息回答用户的问题。提供全面、准确的解答。
 如果检索信息中没有相关内容，请坦率承认不知道，不要编造信息。
-回答时保持友好、专业的语气，确保回答简洁明了。""",
-            
-            IntentType.UNKNOWN: """你是一个专业的电商客服助手，负责回答用户的各类问题。
-请根据提供的信息回答用户的问题。如果无法确定用户的具体意图，请尝试提供有用的一般性信息。
-如果检索信息中没有相关内容，请坦率承认不知道，不要编造信息。
 回答时保持友好、专业的语气，确保回答简洁明了。"""
         }
         
-        return prompts.get(intent, prompts[IntentType.UNKNOWN])
+        return prompts.get(intent, prompts[IntentType.GENERAL_INQUIRY])
 
-
-# 单例模式
+# 创建聊天服务实例
 chat_service = ChatService() 

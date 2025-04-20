@@ -1,8 +1,9 @@
 import os
 import logging
 import json
-from typing import List, Dict, Any, Optional, Union
 import glob
+import asyncio
+from typing import List, Dict, Any, Optional, Tuple
 
 from langchain_core.documents import Document
 
@@ -12,12 +13,22 @@ from app.core.vector_store import (
     order_vector_store,
     return_refund_vector_store,
     general_vector_store,
-    VectorStoreManager
+    VectorStoreManager,
+    vector_store_manager
 )
 from app.models.schemas import IntentType, DocumentInput
-from app.utils.helpers import load_json_file, save_json_file
+from app.utils.helpers import load_json_file, save_json_file, performance_monitor, find_files_by_pattern
+from app.models.enums import KnowledgeBaseType
 
 logger = logging.getLogger(__name__)
+
+# 知识库类型
+KNOWLEDGE_BASE_TYPES = [
+    "product",           # 产品信息
+    "order",             # 订单信息
+    "return_refund",     # 退换货政策
+    "general"            # 一般常见问题
+]
 
 
 class KnowledgeService:
@@ -32,334 +43,271 @@ class KnowledgeService:
             IntentType.GENERAL_INQUIRY: general_vector_store,
         }
         self.knowledge_base_path = KNOWLEDGE_BASE_PATH
-    
-    def init_knowledge_base(self) -> Dict[str, bool]:
-        """
-        初始化知识库，加载所有知识文件
+        self.vector_store_managers = {}
+        self.initialized = False
         
+        logger.info("知识库服务初始化完成")
+    
+    async def init_knowledge_base(self) -> Dict[str, int]:
+        """初始化知识库
+
         Returns:
-            各知识库初始化结果
+            Dict[str, int]: 加载的数据统计
         """
-        results = {}
+        logger.info("开始初始化知识库...")
+        if not os.path.exists(KNOWLEDGE_BASE_PATH):
+            logger.error(f"知识库路径不存在: {KNOWLEDGE_BASE_PATH}")
+            raise FileNotFoundError(f"知识库路径不存在: {KNOWLEDGE_BASE_PATH}")
         
-        try:
-            # 先清空现有向量库，确保数据完全刷新
-            self.clear_knowledge_base()
-            
-            # 加载产品信息到产品知识库
-            product_files = glob.glob(os.path.join(self.knowledge_base_path, "product_*.json"))
-            results["product_knowledge"] = self._load_files_to_vector_store(
-                product_files, 
-                self.vector_stores[IntentType.PRODUCT_INQUIRY]
+        stats = {
+            "product": 0,
+            "order": 0,
+            "return_refund": 0,
+            "general": 0
+        }
+        
+        # 清空现有的vector stores
+        logger.info("清空现有的vector stores")
+        await vector_store_manager.clear_vector_store(KnowledgeBaseType.PRODUCT.value)
+        await vector_store_manager.clear_vector_store(KnowledgeBaseType.ORDER.value)
+        await vector_store_manager.clear_vector_store(KnowledgeBaseType.RETURN_REFUND.value)
+        await vector_store_manager.clear_vector_store(KnowledgeBaseType.GENERAL.value)
+        
+        # 加载产品信息
+        product_files = glob.glob(os.path.join(KNOWLEDGE_BASE_PATH, "product_*.json"))
+        if product_files:
+            product_count = await self._load_files_to_knowledge_base(
+                product_files,
+                KnowledgeBaseType.PRODUCT.value
             )
-            
-            # 加载订单信息到订单知识库
-            order_files = glob.glob(os.path.join(self.knowledge_base_path, "order_*.json"))
-            results["order_knowledge"] = self._load_files_to_vector_store(
-                order_files, 
-                self.vector_stores[IntentType.ORDER_STATUS]
+            stats["product"] = product_count
+            logger.info(f"加载了 {product_count} 个产品信息文件")
+        
+        # 加载订单信息
+        order_files = glob.glob(os.path.join(KNOWLEDGE_BASE_PATH, "order_*.json"))
+        if order_files:
+            order_count = await self._load_files_to_knowledge_base(
+                order_files,
+                KnowledgeBaseType.ORDER.value
             )
-            
-            # 加载退货退款信息到退货退款知识库
-            return_files = glob.glob(os.path.join(self.knowledge_base_path, "*refund*.json"))
-            results["return_refund_knowledge"] = self._load_files_to_vector_store(
-                return_files, 
-                self.vector_stores[IntentType.RETURN_REFUND]
+            stats["order"] = order_count
+            logger.info(f"加载了 {order_count} 个订单信息文件")
+        
+        # 加载退换货信息
+        return_refund_files = glob.glob(os.path.join(KNOWLEDGE_BASE_PATH, "*refund*.json"))
+        if return_refund_files:
+            return_refund_count = await self._load_files_to_knowledge_base(
+                return_refund_files,
+                KnowledgeBaseType.RETURN_REFUND.value
             )
-            
-            # 加载常见问题到通用知识库
-            faq_files = glob.glob(os.path.join(self.knowledge_base_path, "faq*.json"))
-            # 增强FAQ处理，确保所有FAQ项目正确加载
-            results["general_knowledge"] = self._load_faq_to_vector_store(
-                faq_files, 
-                self.vector_stores[IntentType.GENERAL_INQUIRY]
+            stats["return_refund"] = return_refund_count
+            logger.info(f"加载了 {return_refund_count} 个退换货信息文件")
+        
+        # 加载FAQ
+        faq_files = glob.glob(os.path.join(KNOWLEDGE_BASE_PATH, "faq*.json"))
+        if faq_files:
+            faq_count = await self._load_files_to_knowledge_base(
+                faq_files,
+                KnowledgeBaseType.GENERAL.value
             )
-            
-            logger.info("知识库初始化完成")
-            # 输出每个知识库文件的数量，便于调试
-            logger.info(f"加载的产品文件数: {len(product_files)}")
-            logger.info(f"加载的订单文件数: {len(order_files)}")
-            logger.info(f"加载的退款文件数: {len(return_files)}")
-            logger.info(f"加载的FAQ文件数: {len(faq_files)}")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"初始化知识库失败: {str(e)}")
-            return {"error": False}
-    
-    def _load_files_to_vector_store(self, file_paths: List[str], vector_store: VectorStoreManager) -> bool:
-        """
-        将文件加载到向量存储
+            stats["general"] = faq_count
+            logger.info(f"加载了 {faq_count} 个FAQ文件")
+        
+        self.initialized = True
+        logger.info("知识库初始化完成")
+        return stats
+
+    async def _load_files_to_knowledge_base(self, file_paths: List[str], kb_type: str) -> int:
+        """将文件加载到知识库
         
         Args:
-            file_paths: 文件路径列表
-            vector_store: 向量存储管理器
+            file_paths (List[str]): 文件路径列表
+            kb_type (str): 知识库类型
             
         Returns:
-            是否成功加载
+            int: 加载的文件数量
         """
-        all_success = True
-        
+        count = 0
         for file_path in file_paths:
             try:
-                logger.info(f"正在加载文件到向量存储: {file_path}")
-                
-                # 读取文件内容
                 with open(file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    
-                # 记录加载的数据条数
+                
+                # 将数据处理为文档格式，添加到向量存储中
+                documents = []
+                
                 if isinstance(data, list):
-                    logger.info(f"文件 {file_path} 包含 {len(data)} 条记录")
-                
-                success = vector_store.import_from_json(file_path)
-                if not success:
-                    logger.warning(f"加载文件失败: {file_path}")
-                    all_success = False
-            except Exception as e:
-                logger.error(f"加载文件 {file_path} 时发生错误: {str(e)}")
-                all_success = False
-        
-        return all_success
-    
-    def _load_faq_to_vector_store(self, file_paths: List[str], vector_store: VectorStoreManager) -> bool:
-        """
-        将FAQ文件加载到向量存储，采用更精细的分块方法
-        
-        Args:
-            file_paths: FAQ文件路径列表
-            vector_store: 向量存储管理器
-            
-        Returns:
-            是否成功加载
-        """
-        all_success = True
-        
-        for file_path in file_paths:
-            try:
-                logger.info(f"正在加载FAQ文件到向量存储: {file_path}")
-                
-                # 读取文件内容
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                if not isinstance(data, list):
-                    logger.warning(f"非标准FAQ格式: {file_path}")
-                    success = vector_store.import_from_json(file_path)
-                    if not success:
-                        all_success = False
-                    continue
-                
-                # 为FAQ创建单独的文档列表
-                faq_documents = []
-                
-                # 遍历所有FAQ类别
-                for category in data:
-                    category_name = category.get("category", "通用问题")
-                    
-                    if "questions" in category and isinstance(category["questions"], list):
-                        # 遍历该类别下的所有问答对
-                        for qa_pair in category["questions"]:
-                            question = qa_pair.get("question", "")
-                            answer = qa_pair.get("answer", "")
-                            
-                            if question and answer:
-                                # 为每个问答对创建独立文档，带有更丰富的元数据
-                                doc_content = {
-                                    "question": question,
-                                    "answer": answer,
-                                    "category": category_name
-                                }
-                                
-                                # 构建带有组合上下文的内容，提高检索相关性
-                                enriched_content = (
-                                    f"问题: {question}\n"
-                                    f"回答: {answer}\n"
-                                    f"类别: {category_name}"
-                                )
-                                
-                                # 创建文档
-                                doc = Document(
-                                    page_content=enriched_content,
-                                    metadata={
-                                        "source": os.path.basename(file_path),
-                                        "category": category_name,
-                                        "question": question,
-                                        "type": "faq"
-                                    }
-                                )
-                                
-                                faq_documents.append(doc)
-                
-                # 记录加载的问答对数量
-                logger.info(f"FAQ文件 {file_path} 包含 {len(faq_documents)} 个问答对")
+                    for item in data:
+                        doc_text = json.dumps(item, ensure_ascii=False)
+                        # 为每个文档添加元数据
+                        metadata = {
+                            "source": file_path,
+                            "type": kb_type
+                        }
+                        documents.append({"text": doc_text, "metadata": metadata})
+                else:
+                    doc_text = json.dumps(data, ensure_ascii=False)
+                    metadata = {
+                        "source": file_path,
+                        "type": kb_type
+                    }
+                    documents.append({"text": doc_text, "metadata": metadata})
                 
                 # 添加到向量存储
-                if faq_documents:
-                    success = vector_store.add_documents(faq_documents)
-                    if not success:
-                        logger.warning(f"加载FAQ文档失败: {file_path}")
-                        all_success = False
-                else:
-                    logger.warning(f"FAQ文件未包含有效问答对: {file_path}")
-            
+                await vector_store_manager.add_documents(documents, kb_type)
+                count += 1
+                logger.debug(f"已加载文件: {file_path} 到知识库 {kb_type}")
             except Exception as e:
-                logger.error(f"加载FAQ文件 {file_path} 时发生错误: {str(e)}")
-                all_success = False
+                logger.error(f"加载文件 {file_path} 时出错: {str(e)}")
         
-        return all_success
+        return count
     
-    def add_document(self, document: DocumentInput, intent_type: IntentType) -> bool:
+    @performance_monitor
+    async def add_documents(self, kb_type: str, documents: List[str], metadatas: List[Dict[str, Any]] = None) -> bool:
         """
         添加文档到知识库
         
         Args:
-            document: 要添加的文档
-            intent_type: 意图类型
+            kb_type: 知识库类型
+            documents: 文档列表
+            metadatas: 元数据列表
             
         Returns:
             是否成功添加
         """
-        try:
-            vector_store = self.vector_stores.get(intent_type)
-            if not vector_store:
-                logger.error(f"未找到意图 {intent_type} 对应的向量存储")
-                return False
+        if kb_type not in self.vector_store_managers:
+            logger.error(f"未知的知识库类型: {kb_type}")
+            return False
             
-            # 创建Document对象
-            doc = Document(
-                page_content=document.text,
-                metadata=document.metadata
+        if not documents:
+            logger.warning("没有提供文档")
+            return False
+            
+        try:
+            # 如果没有提供元数据，创建空元数据
+            if metadatas is None:
+                metadatas = [{"source": "api_upload"} for _ in documents]
+                
+            # 添加文档到向量存储
+            self.vector_store_managers[kb_type].add_texts(documents, metadatas)
+            logger.info(f"已成功添加 {len(documents)} 个文档到知识库 {kb_type}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"添加文档到知识库 {kb_type} 失败: {str(e)}")
+            return False
+    
+    @performance_monitor
+    async def clear_knowledge_base(self, kb_type: Optional[str] = None) -> bool:
+        """
+        清除知识库
+        
+        Args:
+            kb_type: 知识库类型，如果为None则清除所有知识库
+            
+        Returns:
+            是否成功清除
+        """
+        try:
+            if kb_type:
+                # 清除指定类型的知识库
+                if kb_type in self.vector_store_managers:
+                    await self.vector_store_managers[kb_type].clear()
+                    logger.info(f"已清除知识库: {kb_type}")
+                else:
+                    logger.warning(f"未知的知识库类型: {kb_type}")
+                    return False
+            else:
+                # 清除所有知识库
+                for kb in self.vector_store_managers.values():
+                    await kb.clear()
+                self.vector_store_managers = {}
+                logger.info("已清除所有知识库")
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"清除知识库失败: {str(e)}")
+            return False
+    
+    @performance_monitor
+    async def retrieve_knowledge(self, kb_type: str, query: str, top_k: int = 3) -> Tuple[List[str], List[Dict[str, Any]]]:
+        """
+        从知识库中检索知识
+        
+        Args:
+            kb_type: 知识库类型
+            query: 查询文本
+            top_k: 返回的结果数量
+            
+        Returns:
+            检索到的文档列表和其来源元数据
+        """
+        if kb_type not in self.vector_store_managers:
+            logger.warning(f"未知的知识库类型: {kb_type}")
+            return [], []
+            
+        try:
+            # 执行相似度搜索
+            docs, sources = await self.vector_store_managers[kb_type].similarity_search(
+                query, 
+                k=top_k
             )
             
-            # 添加到向量存储
-            return vector_store.add_documents([doc])
+            if not docs:
+                logger.info(f"知识库 {kb_type} 中没有找到与查询相关的结果: {query}")
+                return [], []
+                
+            # 提取文档和元数据
+            doc_contents = []
+            metadatas = []
+            
+            for i, doc in enumerate(docs):
+                doc_contents.append(doc.page_content)
+                metadatas.append({
+                    "source": doc.metadata.get("source", "unknown"), 
+                    "score": 1.0 - (i * 0.1)  # 简单模拟得分
+                })
+                
+            logger.info(f"从知识库 {kb_type} 检索到 {len(doc_contents)} 个结果")
+            return doc_contents, metadatas
             
         except Exception as e:
-            logger.error(f"添加文档到知识库失败: {str(e)}")
-            return False
-    
-    def clear_knowledge_base(self, intent_type: Optional[IntentType] = None) -> Dict[str, bool]:
-        """
-        清空知识库
-        
-        Args:
-            intent_type: 要清空的意图类型知识库，如果为None则清空所有
-            
-        Returns:
-            清空结果
-        """
-        results = {}
-        
-        try:
-            if intent_type:
-                # 清空特定知识库
-                vector_store = self.vector_stores.get(intent_type)
-                if vector_store:
-                    results[intent_type.value] = vector_store.clear()
-                else:
-                    results[intent_type.value] = False
-            else:
-                # 清空所有知识库
-                for intent, vector_store in self.vector_stores.items():
-                    results[intent.value] = vector_store.clear()
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"清空知识库失败: {str(e)}")
-            return {"error": False}
-    
-    def save_document_to_file(self, document: Dict[str, Any], file_name: str) -> bool:
-        """
-        保存文档到文件
-        
-        Args:
-            document: 文档内容
-            file_name: 文件名
-            
-        Returns:
-            是否成功保存
-        """
-        file_path = os.path.join(self.knowledge_base_path, file_name)
-        
-        try:
-            # 如果已存在同名文件，先加载原文件内容
-            existing_data = []
-            if os.path.exists(file_path):
-                existing_data = load_json_file(file_path) or []
-                if not isinstance(existing_data, list):
-                    existing_data = [existing_data]
-            
-            # 添加新文档
-            existing_data.append(document)
-            
-            # 保存到文件
-            return save_json_file(existing_data, file_path)
-            
-        except Exception as e:
-            logger.error(f"保存文档到文件失败: {str(e)}")
-            return False
-    
-    def get_all_knowledge_files(self) -> List[str]:
-        """
-        获取所有知识文件
-        
-        Returns:
-            知识文件路径列表
-        """
-        try:
-            return glob.glob(os.path.join(self.knowledge_base_path, "*.json"))
-        except Exception as e:
-            logger.error(f"获取知识文件列表失败: {str(e)}")
-            return []
-    
-    def get_knowledge_content(self, file_name: str) -> Optional[Any]:
-        """
-        获取知识文件内容
-        
-        Args:
-            file_name: 文件名
-            
-        Returns:
-            文件内容
-        """
-        file_path = os.path.join(self.knowledge_base_path, file_name)
-        return load_json_file(file_path)
+            logger.error(f"从知识库 {kb_type} 检索知识失败: {str(e)}")
+            return [], []
     
     def find_order_by_id(self, order_id: str) -> Optional[Dict[str, Any]]:
-        """
-        根据订单号查找订单信息
+        """根据订单ID查找订单
         
         Args:
-            order_id: 订单号
+            order_id (str): 订单ID
             
         Returns:
-            订单信息或None
+            Optional[Dict[str, Any]]: 订单信息，如果未找到则返回None
         """
-        # 获取所有订单相关文件
-        order_files = glob.glob(os.path.join(self.knowledge_base_path, "order_*.json"))
+        logger.info(f"查询订单ID: {order_id}")
+        
+        # 查找所有订单文件
+        order_files = glob.glob(os.path.join(KNOWLEDGE_BASE_PATH, "order_*.json"))
         
         for file_path in order_files:
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                    orders = json.load(f)
                 
-                # 如果是列表，遍历查找
-                if isinstance(data, list):
-                    for item in data:
-                        if isinstance(item, dict) and item.get("order_id") == order_id:
-                            logger.info(f"在文件 {os.path.basename(file_path)} 中找到订单 {order_id}")
-                            return item
-                # 如果是单个对象
-                elif isinstance(data, dict) and data.get("order_id") == order_id:
-                    logger.info(f"在文件 {os.path.basename(file_path)} 中找到订单 {order_id}")
-                    return data
+                # 如果不是列表，转换为列表
+                if not isinstance(orders, list):
+                    orders = [orders]
+                
+                # 查找匹配订单ID的订单
+                for order in orders:
+                    if order.get("order_id") == order_id:
+                        logger.info(f"在文件 {file_path} 中找到订单 {order_id}")
+                        return order
             except Exception as e:
-                logger.error(f"读取文件 {file_path} 失败: {str(e)}")
+                logger.error(f"读取订单文件 {file_path} 时出错: {str(e)}")
         
-        logger.warning(f"未找到订单号 {order_id} 的信息")
+        logger.warning(f"未找到订单ID: {order_id}")
         return None
 
 

@@ -66,7 +66,7 @@ class RAGRetriever:
                 vector_store = self.vector_stores[IntentType.GENERAL_INQUIRY]
             
             # 执行相似度搜索
-            docs = await vector_store.similarity_search(query, k=top_k)
+            docs, sources = await vector_store.similarity_search(query, k=top_k)
             
             # 如果主要向量库未返回足够的结果，从其他向量库补充
             if len(docs) < top_k * 0.6:  # 如果不足60%，从其他知识库补充
@@ -116,7 +116,7 @@ class RAGRetriever:
         # 首先从通用知识库检索
         if primary_intent != IntentType.GENERAL_INQUIRY:
             try:
-                general_docs = await self.vector_stores[IntentType.GENERAL_INQUIRY].similarity_search(query, k=k//2)
+                general_docs, _ = await self.vector_stores[IntentType.GENERAL_INQUIRY].similarity_search(query, k=k//2)
                 docs.extend(general_docs)
             except Exception as e:
                 logger.error(f"从通用知识库检索失败: {str(e)}")
@@ -126,7 +126,7 @@ class RAGRetriever:
         for intent in related_intents:
             if intent != primary_intent and intent in self.vector_stores:
                 try:
-                    intent_docs = await self.vector_stores[intent].similarity_search(query, k=k//2)
+                    intent_docs, _ = await self.vector_stores[intent].similarity_search(query, k=k//2)
                     docs.extend(intent_docs)
                 except Exception as e:
                     logger.error(f"从意图 {intent} 知识库检索失败: {str(e)}")
@@ -345,14 +345,13 @@ class RAGRetriever:
             
             try:
                 # 在当前向量存储中搜索
-                docs = await vector_store.similarity_search(query, k=top_k)
+                docs, sources = await vector_store.similarity_search(query, k=top_k)
                 
                 # 将结果添加到总结果
                 all_docs.extend(docs)
                 
-                # 提取文档来源
-                for doc in docs:
-                    source = doc.metadata.get("source", "未知来源")
+                # 添加来源
+                for source in sources:
                     if source not in all_sources:
                         all_sources.append(source)
             except Exception as e:

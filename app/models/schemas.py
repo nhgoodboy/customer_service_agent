@@ -41,6 +41,7 @@ class ChatRequest(BaseModel):
     """聊天请求模型"""
     query: str
     session_id: str
+    system_prompt: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
