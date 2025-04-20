@@ -31,7 +31,7 @@ class VectorStoreManager:
         self.vector_store = self._initialize_vector_store()
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
-            chunk_overlap=100,
+            chunk_overlap=200,  # 增加重叠以获取更好的上下文连续性
             separators=["\n\n", "\n", ". ", " ", ""]
         )
     
@@ -124,6 +124,8 @@ class VectorStoreManager:
             # 对文档进行分块
             chunks = []
             for doc in processed_docs:
+                # 为文档添加上下文丰富的表示
+                doc = self._enrich_document_with_context(doc)
                 doc_chunks = self.text_splitter.split_documents([doc])
                 chunks.extend(doc_chunks)
             
@@ -137,6 +139,51 @@ class VectorStoreManager:
             logger.error(f"添加文档到向量存储失败: {str(e)}")
             return False
     
+    def _enrich_document_with_context(self, doc: Document) -> Document:
+        """
+        为文档添加上下文信息，增强检索效果
+        
+        Args:
+            doc: 原始文档对象
+            
+        Returns:
+            增强后的文档对象
+        """
+        # 获取文档内容和元数据
+        content = doc.page_content
+        metadata = doc.metadata.copy() if doc.metadata else {}
+        
+        # 检查内容是否是JSON格式
+        if content.startswith('{') and content.endswith('}'):
+            try:
+                # 解析JSON
+                content_json = json.loads(content)
+                
+                # 为FAQ文档添加特殊处理
+                if metadata.get('type') == 'faq' or (isinstance(content_json, dict) and 'question' in content_json and 'answer' in content_json):
+                    # 已经是FAQ格式，保持原样
+                    return doc
+                
+                # 为普通JSON文档创建更易于检索的文本表示
+                enhanced_content = []
+                for key, value in content_json.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        enhanced_content.append(f"{key}: {value}")
+                    elif isinstance(value, (list, dict)):
+                        enhanced_content.append(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+                
+                # 保留原始JSON内容的同时，添加更易于理解的表示
+                if enhanced_content:
+                    # 拼接增强内容和原始内容
+                    new_content = "\n".join(enhanced_content) + "\n原始数据: " + content
+                    return Document(page_content=new_content, metadata=metadata)
+            except:
+                # 解析JSON失败，使用原始内容
+                pass
+        
+        # 返回原始文档
+        return doc
+    
     async def similarity_search(self, query: str, k: int = 5) -> List[Document]:
         """
         执行相似度搜索
@@ -149,12 +196,37 @@ class VectorStoreManager:
             相似文档列表
         """
         try:
-            docs = self.vector_store.similarity_search(query, k=k)
+            # 首先尝试使用增强查询技术
+            enhanced_query = self._create_enhanced_query(query)
+            docs = self.vector_store.similarity_search(enhanced_query, k=k)
             logger.info(f"查询: '{query}' 返回了 {len(docs)} 个相似文档")
             return docs
         except Exception as e:
             logger.error(f"相似度搜索失败: {str(e)}")
             return []
+    
+    def _create_enhanced_query(self, query: str) -> str:
+        """
+        创建增强查询，提高检索精度
+        
+        Args:
+            query: 原始查询
+            
+        Returns:
+            增强后的查询
+        """
+        # 对于短查询，可以适当扩展以提高召回率
+        if len(query) < 10:
+            # 检查是否包含特定关键词，如"积分"
+            if "积分" in query:
+                return f"{query} 购物积分 会员积分 积分使用 积分规则"
+            elif "订单" in query:
+                return f"{query} 订单状态 物流 配送 发货"
+            elif "退款" in query or "退货" in query:
+                return f"{query} 退货政策 退款流程 售后"
+            
+        # 返回原始查询
+        return query
     
     def get_relevant_documents(self, query: str, k: int = 5) -> List[Document]:
         """
@@ -167,7 +239,9 @@ class VectorStoreManager:
         Returns:
             相关文档列表
         """
-        return self.vector_store.similarity_search(query, k=k)
+        # 增强查询
+        enhanced_query = self._create_enhanced_query(query)
+        return self.vector_store.similarity_search(enhanced_query, k=k)
     
     def clear(self) -> bool:
         """
@@ -204,26 +278,50 @@ class VectorStoreManager:
             # 处理不同类型的JSON数据结构
             documents = []
             
+            # 文件名作为源
+            file_name = os.path.basename(file_path)
+            
             if isinstance(data, list):
                 # 如果是列表，添加每个项目
                 for item in data:
                     if isinstance(item, dict):
-                        text = json.dumps(item, ensure_ascii=False)
-                        documents.append(Document(
-                            page_content=text,
-                            metadata={"source": os.path.basename(file_path)}
-                        ))
+                        # 为每个条目创建上下文丰富的表示
+                        item_str = json.dumps(item, ensure_ascii=False)
+                        
+                        # 添加文件名作为上下文信息
+                        metadata = {"source": file_name}
+                        
+                        # 检查是否是FAQ格式
+                        if "question" in item and "answer" in item:
+                            metadata["type"] = "faq"
+                            metadata["question"] = item["question"]
+                            
+                            # 创建富化内容
+                            content = f"问题: {item['question']}\n回答: {item['answer']}"
+                            if "category" in item:
+                                content += f"\n类别: {item['category']}"
+                                metadata["category"] = item["category"]
+                            
+                            documents.append(Document(
+                                page_content=content,
+                                metadata=metadata
+                            ))
+                        else:
+                            documents.append(Document(
+                                page_content=item_str,
+                                metadata=metadata
+                            ))
                     else:
                         documents.append(Document(
                             page_content=str(item),
-                            metadata={"source": os.path.basename(file_path)}
+                            metadata={"source": file_name}
                         ))
             elif isinstance(data, dict):
                 # 如果是字典，添加整个字典
                 text = json.dumps(data, ensure_ascii=False)
                 documents.append(Document(
                     page_content=text,
-                    metadata={"source": os.path.basename(file_path)}
+                    metadata={"source": file_name}
                 ))
             
             # 添加文档

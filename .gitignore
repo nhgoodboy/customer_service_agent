@@ -28,3 +28,6 @@ var/
 *.pyw
 *.pyz
 *.pywz
+/data/vector_store/
+
+*./sqlite3*

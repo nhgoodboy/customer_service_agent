@@ -69,7 +69,8 @@ class KnowledgeService:
             
             # 加载常见问题到通用知识库
             faq_files = glob.glob(os.path.join(self.knowledge_base_path, "faq*.json"))
-            results["general_knowledge"] = self._load_files_to_vector_store(
+            # 增强FAQ处理，确保所有FAQ项目正确加载
+            results["general_knowledge"] = self._load_faq_to_vector_store(
                 faq_files, 
                 self.vector_stores[IntentType.GENERAL_INQUIRY]
             )
@@ -118,6 +119,93 @@ class KnowledgeService:
                     all_success = False
             except Exception as e:
                 logger.error(f"加载文件 {file_path} 时发生错误: {str(e)}")
+                all_success = False
+        
+        return all_success
+    
+    def _load_faq_to_vector_store(self, file_paths: List[str], vector_store: VectorStoreManager) -> bool:
+        """
+        将FAQ文件加载到向量存储，采用更精细的分块方法
+        
+        Args:
+            file_paths: FAQ文件路径列表
+            vector_store: 向量存储管理器
+            
+        Returns:
+            是否成功加载
+        """
+        all_success = True
+        
+        for file_path in file_paths:
+            try:
+                logger.info(f"正在加载FAQ文件到向量存储: {file_path}")
+                
+                # 读取文件内容
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                if not isinstance(data, list):
+                    logger.warning(f"非标准FAQ格式: {file_path}")
+                    success = vector_store.import_from_json(file_path)
+                    if not success:
+                        all_success = False
+                    continue
+                
+                # 为FAQ创建单独的文档列表
+                faq_documents = []
+                
+                # 遍历所有FAQ类别
+                for category in data:
+                    category_name = category.get("category", "通用问题")
+                    
+                    if "questions" in category and isinstance(category["questions"], list):
+                        # 遍历该类别下的所有问答对
+                        for qa_pair in category["questions"]:
+                            question = qa_pair.get("question", "")
+                            answer = qa_pair.get("answer", "")
+                            
+                            if question and answer:
+                                # 为每个问答对创建独立文档，带有更丰富的元数据
+                                doc_content = {
+                                    "question": question,
+                                    "answer": answer,
+                                    "category": category_name
+                                }
+                                
+                                # 构建带有组合上下文的内容，提高检索相关性
+                                enriched_content = (
+                                    f"问题: {question}\n"
+                                    f"回答: {answer}\n"
+                                    f"类别: {category_name}"
+                                )
+                                
+                                # 创建文档
+                                doc = Document(
+                                    page_content=enriched_content,
+                                    metadata={
+                                        "source": os.path.basename(file_path),
+                                        "category": category_name,
+                                        "question": question,
+                                        "type": "faq"
+                                    }
+                                )
+                                
+                                faq_documents.append(doc)
+                
+                # 记录加载的问答对数量
+                logger.info(f"FAQ文件 {file_path} 包含 {len(faq_documents)} 个问答对")
+                
+                # 添加到向量存储
+                if faq_documents:
+                    success = vector_store.add_documents(faq_documents)
+                    if not success:
+                        logger.warning(f"加载FAQ文档失败: {file_path}")
+                        all_success = False
+                else:
+                    logger.warning(f"FAQ文件未包含有效问答对: {file_path}")
+            
+            except Exception as e:
+                logger.error(f"加载FAQ文件 {file_path} 时发生错误: {str(e)}")
                 all_success = False
         
         return all_success

@@ -2,6 +2,7 @@ import logging
 from typing import Dict, List, Any, Optional
 import json
 import re
+import os
 
 from app.models.schemas import IntentType, ChatRequest, ChatResponse
 from app.core.llm_manager import llm_manager
@@ -11,7 +12,6 @@ from app.core.session_manager import session_manager
 from app.utils.helpers import extract_document_content, truncate_text, format_chat_history
 from config.settings import KNOWLEDGE_BASE_PATH
 from app.services.knowledge_service import knowledge_service
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,13 @@ class ChatService:
                     
                     return response
             
-            # 如果不是订单查询或没有找到订单，使用常规RAG检索
-            rag_result = await self.rag_retriever.retrieve(query, intent)
+            # 对于特定关键词内容，使用多向量存储搜索以提高召回率
+            if any(keyword in query for keyword in ["积分", "points", "会员", "兑换"]):
+                logger.info(f"检测到积分相关查询，使用多向量存储搜索: {query}")
+                rag_result = await self.rag_retriever.multi_vector_store_search(query)
+            else:
+                # 使用增强型RAG检索功能
+                rag_result = await self.rag_retriever.retrieve(query, intent)
             
             # 生成回复
             response_text = await self._generate_response(query, intent, rag_result, chat_history)
@@ -234,11 +239,16 @@ class ChatService:
             # 提取检索文档内容
             context = ""
             if rag_result.documents:
-                # 将文档转换为文本
+                # 格式化文档内容，考虑特殊类型
                 docs_text = []
                 for doc in rag_result.documents:
                     if isinstance(doc, dict):
-                        docs_text.append(json.dumps(doc, ensure_ascii=False))
+                        # 检查是否是FAQ类型的文档
+                        if doc.get("type") == "faq":
+                            faq_text = f"问题: {doc.get('question', '')}\n回答: {doc.get('content', '')}"
+                            docs_text.append(faq_text)
+                        else:
+                            docs_text.append(json.dumps(doc, ensure_ascii=False))
                     else:
                         docs_text.append(str(doc))
                 
