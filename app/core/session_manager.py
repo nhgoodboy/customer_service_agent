@@ -31,6 +31,11 @@ class SessionManager:
         Returns:
             会话数据字典
         """
+        # 检查会话ID是否有效
+        if not session_id or session_id == "undefined" or not isinstance(session_id, str):
+            logger.warning(f"无效的会话ID: {session_id}，创建新的会话ID")
+            session_id = str(uuid.uuid4())
+        
         # 如果会话不存在，创建新会话
         if session_id not in self.sessions:
             logger.info(f"创建新会话: {session_id}")

@@ -3,6 +3,7 @@ from typing import Dict, Any, Tuple
 
 from app.models.schemas import IntentType, IntentClassificationResponse
 from app.core.llm_manager import llm_manager
+from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,6 @@ class IntentClassifier:
     def __init__(self):
         """初始化意图分类器"""
         self.llm_manager = llm_manager
-        self.intent_classification_chain = llm_manager.get_intent_classification_chain()
     
     async def classify(self, query: str) -> IntentClassificationResponse:
         """
@@ -50,11 +50,24 @@ class IntentClassifier:
             (意图类型, 置信度)
         """
         try:
-            # 调用意图分类链
-            intent_text = await self.intent_classification_chain.ainvoke({"query": query})
+            # 系统提示
+            intent_system_prompt = """你是一个专业的意图分类助手。你的任务是分析用户的查询并将其分类为以下意图类别之一：
+- product_inquiry: 与商品相关的咨询，如商品功能、规格、库存等
+- order_status: 与订单状态相关的查询，如订单跟踪、发货状态等
+- return_refund: 与退货退款相关的查询，如退货流程、退款状态等
+- general_inquiry: 其他一般性问题，如账户问题、平台政策等
+
+仅返回最匹配的意图类别名称，不要返回任何其他内容。
+"""
             
-            # 清理和标准化LLM输出
-            intent_text = intent_text.strip().lower()
+            # 直接使用LLM进行调用，避免使用链
+            messages = [
+                SystemMessage(content=intent_system_prompt),
+                HumanMessage(content=query)
+            ]
+            
+            response = await self.llm_manager.llm.ainvoke(messages)
+            intent_text = response.content.strip().lower()
             
             # 映射到IntentType枚举
             if "product" in intent_text or "product_inquiry" in intent_text:

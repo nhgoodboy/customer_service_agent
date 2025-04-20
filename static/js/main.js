@@ -157,13 +157,25 @@ document.addEventListener('DOMContentLoaded', function() {
         // 查找或创建session_id
         let sessionId = localStorage.getItem('session_id');
         
+        // 确保sessionId不是"undefined"字符串
+        if (sessionId === "undefined" || sessionId === null || sessionId === undefined) {
+            sessionId = null;
+        }
+        
         // 如果没有session_id，先创建一个
         const createSessionIfNeeded = !sessionId 
-            ? fetch('/api/session/create').then(res => res.json()).then(data => {
+            ? fetch('/api/session/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({})
+              }).then(res => res.json()).then(data => {
                 sessionId = data.session_id;
                 localStorage.setItem('session_id', sessionId);
+                console.log('创建新会话ID:', sessionId);
                 return sessionId;
-            })
+              })
             : Promise.resolve(sessionId);
         
         createSessionIfNeeded
@@ -185,6 +197,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!response.ok) {
                     if (response.status === 404) {
                         throw new Error('接口未找到，请确认服务器是否正常运行');
+                    } else if (response.status === 422) {
+                        throw new Error('请求参数格式错误，请检查API格式要求');
                     } else {
                         return response.json().then(errorData => {
                             throw new Error(`${response.statusText}: ${errorData.detail || errorData.message || '未知错误'}`);

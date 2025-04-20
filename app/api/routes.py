@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Body
 from typing import Dict, List, Any, Optional
 import uuid
+import logging
 
 from app.models.schemas import (
     ChatRequest,
@@ -13,6 +14,7 @@ from app.services.knowledge_service import knowledge_service
 from app.core.session_manager import session_manager
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -26,17 +28,37 @@ async def chat(request: ChatRequest):
     Returns:
         聊天响应
     """
+    # 参数验证
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=422, detail="查询内容不能为空")
+    
     # 确保有session_id
     if not request.session_id:
         request.session_id = str(uuid.uuid4())
     
-    return await chat_service.process_chat(request)
+    try:
+        return await chat_service.process_chat(request)
+    except Exception as e:
+        logger.error(f"聊天处理失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"处理请求失败: {str(e)}")
 
 
 @router.post("/session/create", response_model=Dict[str, str])
 async def create_session():
     """
     创建新会话
+    
+    Returns:
+        包含会话ID的字典
+    """
+    session_id = session_manager.create_session()
+    return {"session_id": session_id}
+
+
+@router.get("/session/create", response_model=Dict[str, str])
+async def create_session_get():
+    """
+    创建新会话(GET方法)，兼容前端
     
     Returns:
         包含会话ID的字典

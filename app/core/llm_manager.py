@@ -33,7 +33,7 @@ class LLMManager:
                 model=DEEPSEEK_MODEL,
                 temperature=TEMPERATURE,
                 max_tokens=MAX_TOKENS,
-                model_kwargs={"deepseek_api_key": DEEPSEEK_API_KEY}  # 新方式
+                deepseek_api_key=DEEPSEEK_API_KEY  # 修改为直接参数而不是model_kwargs中传递
             )
             logger.info(f"成功初始化DeepSeek LLM: {DEEPSEEK_MODEL}")
         except Exception as e:

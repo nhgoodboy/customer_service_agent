@@ -120,36 +120,49 @@ class ChatService:
             
             # 如果没有检索到文档，使用通用回复
             if not context:
-                # 直接使用LLM回答
-                formatted_history = self.llm_manager.format_chat_history(chat_history[:-1])  # 排除最后一条用户消息
+                # 直接使用LLM回答，使用相同的消息格式
+                from langchain_core.messages import SystemMessage, HumanMessage
                 
-                prompt = f"用户查询: {query}"
+                # 创建系统消息和用户消息
+                messages = [
+                    SystemMessage(content=system_prompt)
+                ]
                 
-                # 创建聊天链并调用
-                chat_chain = self.llm_manager.get_chat_chain(system_prompt)
-                response = await chat_chain.ainvoke({
-                    "messages": formatted_history + [{"role": "user", "content": prompt}]
-                })
+                # 添加历史消息（如果有的话）
+                for msg in chat_history[:-1]:  # 排除最后一条用户消息
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        messages.append(HumanMessage(content=content))
+                    elif role == "assistant":
+                        from langchain_core.messages import AIMessage
+                        messages.append(AIMessage(content=content))
                 
-                return response
+                # 添加当前用户查询
+                messages.append(HumanMessage(content=query))
+                
+                # 调用LLM
+                response = await self.llm_manager.llm.ainvoke(messages)
+                return response.content
             
-            # 使用RAG链生成回复
-            rag_chain = self.llm_manager.get_rag_chain(system_prompt)
+            # 使用RAG提示模板
+            rag_prompt = f"""
+{system_prompt}
+
+检索到的信息:
+{context}
+
+用户问题:
+{query}
+
+请基于检索到的信息回答用户问题:
+"""
             
-            # 添加历史上下文到提示中
-            if len(chat_history) > 1:
-                history_text = format_chat_history(chat_history[:-1])  # 排除最后一条用户消息
-                user_query = f"聊天历史:\n{history_text}\n\n当前问题: {query}"
-            else:
-                user_query = query
-            
-            # 调用RAG链
-            response = await rag_chain.ainvoke({
-                "context": context,
-                "query": user_query
-            })
-            
-            return response
+            # 直接调用LLM
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages = [SystemMessage(content=rag_prompt)]
+            response = await self.llm_manager.llm.ainvoke(messages)
+            return response.content
             
         except Exception as e:
             logger.error(f"生成回复失败: {str(e)}")

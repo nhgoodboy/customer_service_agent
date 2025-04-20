@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 from fastapi.routing import APIRoute
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api import router
 from app.services.knowledge_service import knowledge_service
@@ -18,6 +19,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# 中间件，添加默认的Content-Type头
+class DefaultJSONResponseMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            # 为API路由添加默认Content-Type头
+            response.headers["Content-Type"] = "application/json"
+        return response
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -34,6 +44,9 @@ app.add_middleware(
     allow_methods=["*"],  # 允许所有HTTP方法
     allow_headers=["*"],  # 允许所有HTTP头
 )
+
+# 添加默认JSON响应头中间件
+app.add_middleware(DefaultJSONResponseMiddleware)
 
 # 设置静态文件和模板
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -73,6 +86,14 @@ async def index(request: Request):
     返回前端聊天界面
     """
     return templates.TemplateResponse("index.html", {"request": request})
+
+# 添加调试页面路由
+@app.get("/debug")
+async def debug_page(request: Request):
+    """
+    返回API调试页面
+    """
+    return templates.TemplateResponse("debug.html", {"request": request})
 
 # 全局异常处理
 @app.exception_handler(Exception)
