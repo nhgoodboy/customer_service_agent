@@ -1,6 +1,7 @@
 import logging
 from typing import Dict, List, Any, Optional
 import json
+import re
 
 from app.models.schemas import IntentType, ChatRequest, ChatResponse
 from app.core.llm_manager import llm_manager
@@ -8,6 +9,9 @@ from app.core.intent_classifier import intent_classifier
 from app.core.rag_retriever import rag_retriever
 from app.core.session_manager import session_manager
 from app.utils.helpers import extract_document_content, truncate_text, format_chat_history
+from config.settings import KNOWLEDGE_BASE_PATH
+from app.services.knowledge_service import knowledge_service
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +53,29 @@ class ChatService:
             # 记录意图到会话元数据
             self.session_manager.set_session_metadata(session_id, "last_intent", intent.value)
             
-            # 检索相关文档
+            # 提取订单号
+            order_id = self._extract_order_id(query)
+            
+            # 如果意图是订单查询且找到了订单号，优先使用直接订单查询
+            if intent == IntentType.ORDER_STATUS and order_id:
+                order_info = self._find_order_by_id(order_id)
+                if order_info:
+                    # 如果找到了订单信息，直接生成回复
+                    response_text = await self._generate_order_response(order_id, order_info, query)
+                    
+                    # 保存助手回复到会话历史
+                    self.session_manager.add_message(session_id, "assistant", response_text)
+                    
+                    # 创建响应
+                    response = ChatResponse(
+                        response=response_text,
+                        intent=intent,
+                        sources=["order_samples.json"]
+                    )
+                    
+                    return response
+            
+            # 如果不是订单查询或没有找到订单，使用常规RAG检索
             rag_result = await self.rag_retriever.retrieve(query, intent)
             
             # 生成回复
@@ -78,6 +104,109 @@ class ChatService:
                 response=error_message,
                 intent=IntentType.UNKNOWN
             )
+    
+    def _extract_order_id(self, query: str) -> Optional[str]:
+        """
+        从查询中提取订单号
+        
+        Args:
+            query: 用户查询
+            
+        Returns:
+            订单号或None
+        """
+        # 常见的订单号格式，例如OD+年月日+数字
+        pattern = r'OD\d{10,12}'
+        match = re.search(pattern, query)
+        if match:
+            return match.group(0)
+        return None
+    
+    def _find_order_by_id(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """
+        根据订单号查找订单信息
+        
+        Args:
+            order_id: 订单号
+            
+        Returns:
+            订单信息或None
+        """
+        # 使用知识服务查找订单
+        order_info = knowledge_service.find_order_by_id(order_id)
+        if order_info:
+            return order_info
+            
+        # 如果知识服务未找到，尝试直接从文件查找
+        order_files = ["order_samples.json"]
+        for file_name in order_files:
+            file_path = os.path.join(KNOWLEDGE_BASE_PATH, file_name)
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        orders = json.load(f)
+                        
+                    # 搜索订单号
+                    if isinstance(orders, list):
+                        for order in orders:
+                            if isinstance(order, dict) and order.get("order_id") == order_id:
+                                logger.info(f"在文件 {file_name} 中找到订单 {order_id}")
+                                return order
+                except Exception as e:
+                    logger.error(f"读取订单文件 {file_path} 失败: {str(e)}")
+        
+        logger.warning(f"未找到订单号 {order_id} 的信息")
+        return None
+    
+    async def _generate_order_response(self, order_id: str, order_info: Dict[str, Any], query: str) -> str:
+        """
+        生成订单查询回复
+        
+        Args:
+            order_id: 订单号
+            order_info: 订单信息
+            query: 用户查询
+            
+        Returns:
+            生成的回复
+        """
+        from langchain_core.messages import SystemMessage, HumanMessage
+        
+        # 将订单信息转换为格式化文本
+        order_text = json.dumps(order_info, ensure_ascii=False, indent=2)
+        
+        # 系统提示
+        system_prompt = """你是一个专业的电商客服助手，擅长处理订单状态查询。
+请根据提供的订单信息回答用户关于订单的问题。准确说明订单的状态、物流信息和预计送达时间。
+回答要基于提供的订单数据，语言要自然友好，不要直接返回JSON数据。
+回答时保持友好、专业的语气，确保回答简洁明了。"""
+        
+        # 用户提示
+        user_prompt = f"""订单信息:
+{order_text}
+
+用户问题:
+{query}
+
+请基于以上订单信息回答用户问题:"""
+        
+        # 调用LLM
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        try:
+            response = await self.llm_manager.llm.ainvoke(messages)
+            if hasattr(response, 'content'):
+                return response.content
+            elif isinstance(response, str):
+                return response
+            else:
+                return str(response)
+        except Exception as e:
+            logger.error(f"生成订单回复失败: {str(e)}")
+            return f"根据订单号 {order_id} 查询到相关信息，但在处理过程中遇到问题。请稍后再试。"
     
     async def _generate_response(
         self, 

@@ -43,6 +43,9 @@ class KnowledgeService:
         results = {}
         
         try:
+            # 先清空现有向量库，确保数据完全刷新
+            self.clear_knowledge_base()
+            
             # 加载产品信息到产品知识库
             product_files = glob.glob(os.path.join(self.knowledge_base_path, "product_*.json"))
             results["product_knowledge"] = self._load_files_to_vector_store(
@@ -72,6 +75,12 @@ class KnowledgeService:
             )
             
             logger.info("知识库初始化完成")
+            # 输出每个知识库文件的数量，便于调试
+            logger.info(f"加载的产品文件数: {len(product_files)}")
+            logger.info(f"加载的订单文件数: {len(order_files)}")
+            logger.info(f"加载的退款文件数: {len(return_files)}")
+            logger.info(f"加载的FAQ文件数: {len(faq_files)}")
+            
             return results
             
         except Exception as e:
@@ -94,6 +103,15 @@ class KnowledgeService:
         for file_path in file_paths:
             try:
                 logger.info(f"正在加载文件到向量存储: {file_path}")
+                
+                # 读取文件内容
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    
+                # 记录加载的数据条数
+                if isinstance(data, list):
+                    logger.info(f"文件 {file_path} 包含 {len(data)} 条记录")
+                
                 success = vector_store.import_from_json(file_path)
                 if not success:
                     logger.warning(f"加载文件失败: {file_path}")
@@ -221,6 +239,40 @@ class KnowledgeService:
         """
         file_path = os.path.join(self.knowledge_base_path, file_name)
         return load_json_file(file_path)
+    
+    def find_order_by_id(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """
+        根据订单号查找订单信息
+        
+        Args:
+            order_id: 订单号
+            
+        Returns:
+            订单信息或None
+        """
+        # 获取所有订单相关文件
+        order_files = glob.glob(os.path.join(self.knowledge_base_path, "order_*.json"))
+        
+        for file_path in order_files:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                # 如果是列表，遍历查找
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and item.get("order_id") == order_id:
+                            logger.info(f"在文件 {os.path.basename(file_path)} 中找到订单 {order_id}")
+                            return item
+                # 如果是单个对象
+                elif isinstance(data, dict) and data.get("order_id") == order_id:
+                    logger.info(f"在文件 {os.path.basename(file_path)} 中找到订单 {order_id}")
+                    return data
+            except Exception as e:
+                logger.error(f"读取文件 {file_path} 失败: {str(e)}")
+        
+        logger.warning(f"未找到订单号 {order_id} 的信息")
+        return None
 
 
 # 单例模式

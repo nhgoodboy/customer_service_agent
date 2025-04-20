@@ -1,5 +1,6 @@
 import logging
 from typing import Dict, Any, Tuple
+import re
 
 from app.models.schemas import IntentType, IntentClassificationResponse
 from app.core.llm_manager import llm_manager
@@ -26,6 +27,14 @@ class IntentClassifier:
             意图分类结果
         """
         try:
+            # 先检查是否包含订单号格式，如果包含，优先返回订单状态查询意图
+            if self._contains_order_id(query):
+                logger.info(f"查询包含订单号，判定为订单状态查询：{query}")
+                return IntentClassificationResponse(
+                    intent=IntentType.ORDER_STATUS,
+                    confidence=0.95
+                )
+            
             intent, confidence = await self._classify_intent(query)
             return IntentClassificationResponse(
                 intent=intent,
@@ -38,6 +47,29 @@ class IntentClassifier:
                 confidence=0.0,
                 message=f"意图分类失败: {str(e)}"
             )
+    
+    def _contains_order_id(self, query: str) -> bool:
+        """
+        检查查询中是否包含订单号格式
+        
+        Args:
+            query: 用户查询文本
+            
+        Returns:
+            是否包含订单号
+        """
+        # 订单号规则：OD+数字
+        order_pattern = r'OD\d{10,12}'
+        
+        # 检查查询是否包含订单号
+        has_order_id = bool(re.search(order_pattern, query))
+        
+        # 检查是否包含与订单相关的关键词
+        order_keywords = ['订单', '包裹', '发货', '物流', '快递', '配送', '送达', '追踪', '查询', '订单号', '物流信息']
+        has_order_keywords = any(keyword in query for keyword in order_keywords)
+        
+        # 如果同时包含订单号格式和订单关键词，或者只包含明确的订单号格式，返回True
+        return has_order_id and (has_order_keywords or 'OD' in query)
     
     async def _classify_intent(self, query: str) -> Tuple[IntentType, float]:
         """
@@ -56,6 +88,8 @@ class IntentClassifier:
 - order_status: 与订单状态相关的查询，如订单跟踪、发货状态等
 - return_refund: 与退货退款相关的查询，如退货流程、退款状态等
 - general_inquiry: 其他一般性问题，如账户问题、平台政策等
+
+注意：如果查询中包含订单号（如OD开头的数字组合）或提到"订单状态"、"物流"、"发货"等内容，应该优先考虑order_status意图。
 
 仅返回最匹配的意图类别名称，不要返回任何其他内容。
 """
