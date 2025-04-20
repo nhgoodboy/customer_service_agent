@@ -66,8 +66,19 @@ class IntentClassifier:
                 HumanMessage(content=query)
             ]
             
-            response = await self.llm_manager.llm.ainvoke(messages)
-            intent_text = response.content.strip().lower()
+            try:
+                response = await self.llm_manager.llm.ainvoke(messages)
+                # 处理不同类型的响应格式
+                if hasattr(response, 'content'):
+                    intent_text = response.content.strip().lower()
+                elif isinstance(response, str):
+                    intent_text = response.strip().lower()
+                else:
+                    intent_text = str(response).strip().lower()
+            except Exception as e:
+                logger.error(f"调用意图分类LLM失败: {str(e)}")
+                # 使用直接查询作为备选方案
+                intent_text = self.llm_manager.direct_query(query, intent_system_prompt).strip().lower()
             
             # 映射到IntentType枚举
             if "product" in intent_text or "product_inquiry" in intent_text:

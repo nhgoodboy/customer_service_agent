@@ -29,11 +29,13 @@ class LLMManager:
             raise ValueError("未设置DeepSeek API密钥")
         
         try:
+            # 根据DeepSeek API的最新规范，修改参数传递方式
+            os.environ["DEEPSEEK_API_KEY"] = DEEPSEEK_API_KEY
+            
             self._llm = ChatDeepSeek(
                 model=DEEPSEEK_MODEL,
                 temperature=TEMPERATURE,
-                max_tokens=MAX_TOKENS,
-                deepseek_api_key=DEEPSEEK_API_KEY  # 修改为直接参数而不是model_kwargs中传递
+                max_tokens=MAX_TOKENS
             )
             logger.info(f"成功初始化DeepSeek LLM: {DEEPSEEK_MODEL}")
         except Exception as e:
@@ -164,7 +166,13 @@ class LLMManager:
         
         try:
             response = self.llm.invoke(messages)
-            return response.content
+            # 处理不同类型的响应格式
+            if hasattr(response, 'content'):
+                return response.content
+            elif isinstance(response, str):
+                return response
+            else:
+                return str(response)
         except Exception as e:
             logger.error(f"直接查询LLM失败: {str(e)}")
             return "抱歉，我暂时无法回答您的问题，请稍后再试。"

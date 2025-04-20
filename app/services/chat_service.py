@@ -121,7 +121,7 @@ class ChatService:
             # 如果没有检索到文档，使用通用回复
             if not context:
                 # 直接使用LLM回答，使用相同的消息格式
-                from langchain_core.messages import SystemMessage, HumanMessage
+                from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
                 
                 # 创建系统消息和用户消息
                 messages = [
@@ -135,15 +135,25 @@ class ChatService:
                     if role == "user":
                         messages.append(HumanMessage(content=content))
                     elif role == "assistant":
-                        from langchain_core.messages import AIMessage
                         messages.append(AIMessage(content=content))
                 
                 # 添加当前用户查询
                 messages.append(HumanMessage(content=query))
                 
-                # 调用LLM
-                response = await self.llm_manager.llm.ainvoke(messages)
-                return response.content
+                try:
+                    # 调用LLM
+                    response = await self.llm_manager.llm.ainvoke(messages)
+                    if hasattr(response, 'content'):
+                        return response.content
+                    elif isinstance(response, str):
+                        return response
+                    else:
+                        # 处理其他可能的响应格式
+                        return str(response)
+                except Exception as e:
+                    logger.error(f"调用LLM失败: {str(e)}")
+                    # 使用直接查询作为备选方案
+                    return self.llm_manager.direct_query(query, system_prompt)
             
             # 使用RAG提示模板
             rag_prompt = f"""
@@ -161,8 +171,19 @@ class ChatService:
             # 直接调用LLM
             from langchain_core.messages import SystemMessage, HumanMessage
             messages = [SystemMessage(content=rag_prompt)]
-            response = await self.llm_manager.llm.ainvoke(messages)
-            return response.content
+            try:
+                response = await self.llm_manager.llm.ainvoke(messages)
+                if hasattr(response, 'content'):
+                    return response.content
+                elif isinstance(response, str):
+                    return response
+                else:
+                    # 处理其他可能的响应格式
+                    return str(response)
+            except Exception as e:
+                logger.error(f"调用RAG LLM失败: {str(e)}")
+                # 使用直接查询作为备选方案
+                return self.llm_manager.direct_query(rag_prompt)
             
         except Exception as e:
             logger.error(f"生成回复失败: {str(e)}")
